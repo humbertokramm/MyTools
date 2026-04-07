@@ -6,6 +6,42 @@ ambientes embarcados e laboratoriais.
 
 ------------------------------------------------------------------------
 
+## 🧭 Visão Geral
+
+``` mermaid
+flowchart TD
+
+A[Início] --> B{Tipo de operação}
+
+B -->|Análise de sinal| C[csvscope.py]
+C --> C1[Carregar CSV]
+C1 --> C2[Processar sinal]
+C2 --> C3[Plot / FFT / PAM]
+
+B -->|Detectar instrumento| D[detectScope.py]
+D --> D1[Listar VISA]
+D1 --> D2[Selecionar instrumento]
+
+B -->|Instalar firmware| E[imageInstaller.py]
+E --> E1[Boot device]
+E1 --> E2[Entrar ONIE]
+E2 --> E3[Configurar rede]
+E3 --> E4[Instalar via HTTP]
+
+B -->|Verificar versão| F[intranetVersionChecker.py]
+F --> F1[Consultar servidor]
+F1 --> F2{Atualizado?}
+F2 -->|Sim| F3[Fim]
+F2 -->|Não| F4[Download + limpar antigos]
+
+B -->|Deploy scripts| G[serializefile.py]
+G --> G1[Selecionar serial]
+G1 --> G2[Enviar arquivos .lua]
+G2 --> G3[Abrir terminal]
+```
+
+------------------------------------------------------------------------
+
 ## 📦 Conteúdo
 
 ### 🔹 `csvscope.py`
@@ -13,82 +49,44 @@ ambientes embarcados e laboratoriais.
 Classe principal para processamento e visualização de sinais de
 osciloscópios e instrumentos de medição.
 
-**Principais funcionalidades:** - Leitura de múltiplos formatos CSV
-(Rohde, Tektronix, Master Tool, USB/VISA) - Plotagem de sinais no
-domínio do tempo - Cálculo e plot de FFT - Geração de diagramas de olho
-(PAM) - Anotações automáticas (RMS, Vmax, transições, etc.) - Filtros
-digitais (Butterworth) - Integração com instrumentos via PyVISA
-
-**Dependências:** - pandas - matplotlib - numpy - scipy - sklearn -
-pyvisa
+**Principais funcionalidades:** - Leitura de múltiplos formatos CSV -
+Plotagem de sinais - FFT - Diagrama de olho (PAM) - Filtros digitais -
+Integração PyVISA
 
 ------------------------------------------------------------------------
 
 ### 🔹 `detectScope.py`
 
-Ferramenta para detecção automática de instrumentos conectados via VISA.
-
-**Funcionalidades:** - Lista dispositivos disponíveis - Consulta
-identificação (`*IDN?`) - Permite seleção interativa do instrumento
+Detecção de instrumentos VISA.
 
 ------------------------------------------------------------------------
 
 ### 🔹 `imageInstaller.py`
 
-Script para automação de instalação de firmware via serial (ex: ONIE).
-
-**Fluxo:** 1. Abre porta serial 2. Aguarda boot do sistema 3. Interage
-com GRUB 4. Entra em modo ONIE 5. Configura rede 6. Executa instalação
-via HTTP
+Instalação automatizada via ONIE.
 
 ------------------------------------------------------------------------
 
 ### 🔹 `intranetVersionChecker.py`
 
-Script para verificar e atualizar automaticamente versões de firmware
-(.bin) a partir de servidores internos.
-
-**Funcionalidades:** - Busca versões remotas (FT ou DMOS) - Compara com
-arquivos locais - Detecta necessidade de atualização - Faz download
-automático da versão mais recente - Remove versões antigas
+Verificação e atualização de firmware.
 
 ------------------------------------------------------------------------
 
-## 🚀 Exemplo de Uso
+### 🔹 `serializefile.py`
 
-### CSVScope básico
+Deploy serial de arquivos `.lua`.
+
+------------------------------------------------------------------------
+
+## 🚀 Exemplos
 
 ``` python
 from csvscope import csvscope
 
-scope = csvscope("Teste de sinal")
-
-scope.format("meu_arquivo.csv")
+scope = csvscope("Teste")
+scope.format("file.csv")
 scope.plot()
-
-scope.formatFFT()
-scope.plotFFT()
-```
-
-------------------------------------------------------------------------
-
-### Verificar atualização de firmware
-
-``` python
-from intranetVersionChecker import check_update, update_local
-
-status, arquivo = check_update("FT", "4201")
-
-if status == "UPDATE":
-    update_local("FT", "4201")
-```
-
-------------------------------------------------------------------------
-
-### Detectar instrumento VISA
-
-``` bash
-python detectScope.py
 ```
 
 ------------------------------------------------------------------------
@@ -96,35 +94,7 @@ python detectScope.py
 ## ⚙️ Requisitos
 
 -   Python 3.8+
--   Acesso à rede (para downloads e instrumentos)
--   Drivers VISA instalados (para uso com instrumentos)
-
-------------------------------------------------------------------------
-
-## 🧠 Aplicações
-
-Este conjunto de ferramentas é útil para:
-
--   Análise de sinais elétricos (laboratório / validação)
--   Automação de testes com osciloscópios
--   Processamento de dados de medições
--   Deploy automatizado de firmware
--   Integração com pipelines de validação de hardware
-
-------------------------------------------------------------------------
-
-## ⚠️ Observações
-
--   Alguns scripts assumem infraestrutura interna (URLs, imagens, etc.)
--   O `csvscope` depende de módulos auxiliares (`engMath`, `dirHandle`)
-    que devem estar disponíveis no ambiente
--   O `imageInstaller` depende de um módulo externo `selectcom`
-
-------------------------------------------------------------------------
-
-## 📄 Licença
-
-Uso interno / privado (ajustar conforme necessário)
+-   VISA instalado (opcional)
 
 ------------------------------------------------------------------------
 
