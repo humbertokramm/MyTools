@@ -4,6 +4,49 @@ from time import sleep
 from fractions import Fraction
 from pprint import pprint
 
+
+'''
+| Medida             | SCPI        |
+| ------------------ | ----------- |
+| Vmax               | `VMAX`      |
+| Vmin               | `VMIN`      |
+| Vpp                | `VPP`       |
+| Vtop               | `VTOP`      |
+| Vbase              | `VBASE`     |
+| Vavg (full screen) | `VAVerage`  |
+| Vrms               | `VRMS`      |
+| Overshoot          | `OVERshoot` |
+| Preshoot           | `PREShoot`  |
+
+| Medida        | SCPI        |
+| ------------- | ----------- |
+| Período       | `PERiod`    |
+| Frequência    | `FREQuency` |
+| Rise Time     | `RISetime`  |
+| Fall Time     | `FALLtime`  |
+| Pulse Width + | `PWIDth`    |
+| Pulse Width - | `NWIDth`    |
+| Duty Cycle    | `DUTYcycle` |
+
+| Medida | SCPI    |
+| ------ | ------- |
+| Delay  | `DELay` |
+| Phase  | `PHASe` |
+
+
+| Medida      | SCPI        |
+| ----------- | ----------- |
+| Edge Count  | `EDGecount` |
+| Burst Width | `BWIDth`    |
+| Area        | `AREa`      |
+
+
+| Medida     | SCPI    |
+| ---------- | ------- |
+| Cycle RMS  | `CRMS`  |
+| Cycle Mean | `CMEAN` |'''
+
+
 MEAS_MAP_KEYSIGHT = {
 
     # Voltage
