@@ -1,0 +1,10 @@
+# Access lock file for dbLib sources
+**/*.ldb
+
+
+#scripts
+*.pyc
+__pycache__/
+
+*.pdf
+*.png
