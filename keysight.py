@@ -4,49 +4,6 @@ from time import sleep
 from fractions import Fraction
 from pprint import pprint
 
-
-'''
-| Medida             | SCPI        |
-| ------------------ | ----------- |
-| Vmax               | `VMAX`      |
-| Vmin               | `VMIN`      |
-| Vpp                | `VPP`       |
-| Vtop               | `VTOP`      |
-| Vbase              | `VBASE`     |
-| Vavg (full screen) | `VAVerage`  |
-| Vrms               | `VRMS`      |
-| Overshoot          | `OVERshoot` |
-| Preshoot           | `PREShoot`  |
-
-| Medida        | SCPI        |
-| ------------- | ----------- |
-| Período       | `PERiod`    |
-| Frequência    | `FREQuency` |
-| Rise Time     | `RISetime`  |
-| Fall Time     | `FALLtime`  |
-| Pulse Width + | `PWIDth`    |
-| Pulse Width - | `NWIDth`    |
-| Duty Cycle    | `DUTYcycle` |
-
-| Medida | SCPI    |
-| ------ | ------- |
-| Delay  | `DELay` |
-| Phase  | `PHASe` |
-
-
-| Medida      | SCPI        |
-| ----------- | ----------- |
-| Edge Count  | `EDGecount` |
-| Burst Width | `BWIDth`    |
-| Area        | `AREa`      |
-
-
-| Medida     | SCPI    |
-| ---------- | ------- |
-| Cycle RMS  | `CRMS`  |
-| Cycle Mean | `CMEAN` |'''
-
-
 MEAS_MAP_KEYSIGHT = {
 
     # Voltage
@@ -162,7 +119,8 @@ class KeysightScope:
         
         if info:
             if "label" in info:
-                self.inst.write(f':CHANnel{ch}:LABel "{info['label']}"')
+                value = info['label']
+                self.inst.write(f':CHANnel{ch}:LABel "{value}"')
                 self.inst.write(f':CHANnel{ch}:LABel:STATe ON')
             if 'cursor' in info:
                 self.inst.write(f':CURSor:MODE MANual')
@@ -183,7 +141,8 @@ class KeysightScope:
                         self.inst.write(f":MEASure:THResholds:ABSolute:UPPer {UPPer:.6f}")
                     self.inst.write(f':MEASure:{v} CHANnel{ch}')
             if "text" in info:
-                self.inst.write(f':DISPlay:ANN:TEXT "{info['text']}"')
+                value = info['text']
+                self.inst.write(f':DISPlay:ANN:TEXT "{value}"')
                 self.inst.write(f':DISPlay:ANN:STATe ON')
                 self.inst.write(f':DISPlay:ANN:X 10')
                 self.inst.write(f':DISPlay:ANN:Y 10')
