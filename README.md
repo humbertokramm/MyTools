@@ -1,93 +1,133 @@
-# Scripts
+# 📊 CSVScope & Tools
 
+Este repositório reúne um conjunto de scripts Python voltados para
+automação de testes, análise de sinais e gerenciamento de firmware em
+ambientes embarcados e laboratoriais.
 
+------------------------------------------------------------------------
 
-## Getting started
+## 📦 Conteúdo
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+### 🔹 `csvscope.py`
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Classe principal para processamento e visualização de sinais de
+osciloscópios e instrumentos de medição.
 
-## Add your files
+**Principais funcionalidades:** - Leitura de múltiplos formatos CSV
+(Rohde, Tektronix, Master Tool, USB/VISA) - Plotagem de sinais no
+domínio do tempo - Cálculo e plot de FFT - Geração de diagramas de olho
+(PAM) - Anotações automáticas (RMS, Vmax, transições, etc.) - Filtros
+digitais (Butterworth) - Integração com instrumentos via PyVISA
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+**Dependências:** - pandas - matplotlib - numpy - scipy - sklearn -
+pyvisa
 
+------------------------------------------------------------------------
+
+### 🔹 `detectScope.py`
+
+Ferramenta para detecção automática de instrumentos conectados via VISA.
+
+**Funcionalidades:** - Lista dispositivos disponíveis - Consulta
+identificação (`*IDN?`) - Permite seleção interativa do instrumento
+
+------------------------------------------------------------------------
+
+### 🔹 `imageInstaller.py`
+
+Script para automação de instalação de firmware via serial (ex: ONIE).
+
+**Fluxo:** 1. Abre porta serial 2. Aguarda boot do sistema 3. Interage
+com GRUB 4. Entra em modo ONIE 5. Configura rede 6. Executa instalação
+via HTTP
+
+------------------------------------------------------------------------
+
+### 🔹 `intranetVersionChecker.py`
+
+Script para verificar e atualizar automaticamente versões de firmware
+(.bin) a partir de servidores internos.
+
+**Funcionalidades:** - Busca versões remotas (FT ou DMOS) - Compara com
+arquivos locais - Detecta necessidade de atualização - Faz download
+automático da versão mais recente - Remove versões antigas
+
+------------------------------------------------------------------------
+
+## 🚀 Exemplo de Uso
+
+### CSVScope básico
+
+``` python
+from csvscope import csvscope
+
+scope = csvscope("Teste de sinal")
+
+scope.format("meu_arquivo.csv")
+scope.plot()
+
+scope.formatFFT()
+scope.plotFFT()
 ```
-cd existing_repo
-git remote add origin https://gitlab.altus.com.br/altus-hw/hw-submodules/scripts.git
-git branch -M master
-git push -uf origin master
+
+------------------------------------------------------------------------
+
+### Verificar atualização de firmware
+
+``` python
+from intranetVersionChecker import check_update, update_local
+
+status, arquivo = check_update("FT", "4201")
+
+if status == "UPDATE":
+    update_local("FT", "4201")
 ```
 
-## Integrate with your tools
+------------------------------------------------------------------------
 
-- [ ] [Set up project integrations](https://gitlab.altus.com.br/altus-hw/hw-submodules/scripts/-/settings/integrations)
+### Detectar instrumento VISA
 
-## Collaborate with your team
+``` bash
+python detectScope.py
+```
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+------------------------------------------------------------------------
 
-## Test and Deploy
+## ⚙️ Requisitos
 
-Use the built-in continuous integration in GitLab.
+-   Python 3.8+
+-   Acesso à rede (para downloads e instrumentos)
+-   Drivers VISA instalados (para uso com instrumentos)
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+------------------------------------------------------------------------
 
-***
+## 🧠 Aplicações
 
-# Editing this README
+Este conjunto de ferramentas é útil para:
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+-   Análise de sinais elétricos (laboratório / validação)
+-   Automação de testes com osciloscópios
+-   Processamento de dados de medições
+-   Deploy automatizado de firmware
+-   Integração com pipelines de validação de hardware
 
-## Suggestions for a good README
+------------------------------------------------------------------------
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## ⚠️ Observações
 
-## Name
-Choose a self-explaining name for your project.
+-   Alguns scripts assumem infraestrutura interna (URLs, imagens, etc.)
+-   O `csvscope` depende de módulos auxiliares (`engMath`, `dirHandle`)
+    que devem estar disponíveis no ambiente
+-   O `imageInstaller` depende de um módulo externo `selectcom`
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+------------------------------------------------------------------------
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## 📄 Licença
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Uso interno / privado (ajustar conforme necessário)
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+------------------------------------------------------------------------
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+## 👨‍💻 Autor
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Humberto Kramm
