@@ -78,23 +78,24 @@ class TektronixScope:
         self.inst.write("DATA:WIDTH 1")
         self.inst.write("DATA:ENC RPB")
 
+        # ESSENCIAL
+        self.inst.write("DATA:RESOLUTION REDUCED")
+
         self.inst.write("DATA:START 1")
-        self.inst.write("DATA:STOP {10000}")
+        self.inst.write("DATA:STOP 10000")  # opcional (display típico)
 
         ymult = float(self.inst.query("WFMPRE:YMULT?"))
         yzero = float(self.inst.query("WFMPRE:YZERO?"))
         yoff  = float(self.inst.query("WFMPRE:YOFF?"))
         xincr = float(self.inst.query("WFMPRE:XINCR?"))
         xzero = float(self.inst.query("WFMPRE:XZERO?"))
-        
-        record_length = int(self.inst.query("WFMPRE:NR_PT?"))
+
         chset = self.get_channel_settings(channel)
 
         raw = self.inst.query_binary_values("CURVE?", datatype='B', container=np.array)
 
         voltage = (raw - yoff) * ymult + yzero
         time = np.arange(len(voltage)) * xincr + xzero
-
 
         metadata = {
             "Instrumento": self.inst.query("*IDN?").strip(),
@@ -103,7 +104,8 @@ class TektronixScope:
             "Record Length": len(raw),
             "Data da captura": datetime.now().isoformat()
         }
-        return time, voltage, metadata|chset
+
+        return time, voltage, metadata | chset
 
     # ---------------------------------------------------------
     def parse_probe_attenuation(self, value):
@@ -188,7 +190,7 @@ class TektronixScope:
 
             for i, v in enumerate(info['meas'], start=1):
                 if i < 5:
-                    if v == "OFF":
+                    if v == None:
                         self.inst.write(f'MEASU:MEAS{i}:STATE OFF')
                         time.sleep(delay)
                     elif v != "":
