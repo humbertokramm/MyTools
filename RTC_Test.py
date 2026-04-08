@@ -23,28 +23,6 @@
     
     ``__init__(connection=False)``
         Inicializa conexão (IP ou COM port).
-    
-    ``handleBootNormal(msg, cmd)``
-        Processa comando fw_printenv para bootnormal.
-        
-        :param msg: Mensagem de resposta
-        :type msg: str
-        :param cmd: Modo teste ativado
-        :type cmd: bool
-        :return: Comando fw_setenv ou False
-        :rtype: str or bool
-    
-    ``changeBootnormal(serial_port=False, host=False, Tests=True, reboot=True)``
-        Altera configuração de boot (teste ou normal).
-        
-        :param serial_port: Porta serial alternativa
-        :type serial_port: str
-        :param host: Host SSH alternativo
-        :type host: str
-        :param Tests: Ativar modo testes
-        :type Tests: bool
-        :param reboot: Reiniciar após mudança
-        :type reboot: bool
 
 **Servidores NTP Padrão**
     - pool.ntp.org
@@ -75,7 +53,6 @@ class RTC_Test:
 		self.port = 22
 		self.username = 'root'
 		self.password = ''
-		self.checkReset= 'cat /mnt/internal/config/dateFile'
 		self.host = False
 		self.serial_port = False
 		
@@ -91,155 +68,6 @@ class RTC_Test:
 		if self.serial_port: return "Serial port: "+self.serial_port
 		elif self.host: return "IP address: "+self.host
 		else: return 'NaN'
-
-
-	def handleBootNormal(self,msg,cmd):
-		verify1 = 'bootnormal='
-		result = False
-		mgtd = 'mgmtd'
-		setBootNormal = "fw_setenv bootnormal '"
-		if verify1 in msg:
-			if mgtd in msg:
-				if cmd: print("Modo testes já ativado")
-				else: result = setBootNormal+msg[len(verify1):].replace(' ' + mgtd,'')+"'"
-			else:
-				if cmd: result = setBootNormal+msg[len(verify1):]+' '+ mgtd+"'"
-				else: print('Modo testes já removido')
-		else: result = False
-		return result
-
-	def changeBootnormal(self,serial_port=False,host=False,Tests=True,reboot=True):
-		#Verifica se já tem destino
-		if serial_port: self.serial_port = serial_port
-		elif host: self.host = host
-		#Verifica o destino
-		if self.serial_port: print('\nchangeBootnormal from:'+self.serial_port)
-		elif self.host: print('\ngchangeBootnormal from:'+self.host)
-		
-		
-		getBootNormal = 'fw_printenv bootnormal'
-		restart = 'reboot'
-		if self.serial_port:
-			# Configuração da porta serial e parâmetros de comunicação
-			serial_baudrate = 115200
-			serial_timeout = 1
-			with serial.Serial(self.serial_port, serial_baudrate, timeout=serial_timeout) as ser:
-				ser.write('root\n'.encode())
-				# Aguarda a resposta
-				response = [0]
-				while response[-1] != '':
-					response.append(ser.readline().decode().strip())
-				
-				getBootNormal = getBootNormal+'\n'
-				ser.write(getBootNormal.encode())
-				# Ler a resposta da fonte de alimentação
-				response = ' '
-				send = ''
-				while (response!=''):
-					# Ler a resposta da fonte de alimentação
-					response = ser.readline().decode().strip()
-					temp = self.handleBootNormal(response,Tests)
-					if temp: send = temp
-				
-				if send:
-					send = send+'\n'
-					print(send)
-					ser.write(send.encode())
-					# Ler a resposta da fonte de alimentação
-					response = ' '
-					while (response!=''):
-						# Ler a resposta da fonte de alimentação
-						response = ser.readline().decode().strip()
-					if reboot:
-						restart = restart+'\n'
-						ser.write(restart.encode())
-					
-				
-
-		if self.host:
-			# Crie um objeto SSHClient
-			ssh = paramiko.SSHClient()
-
-			# Defina uma política para lidar com chaves de host desconhecidas
-			ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-			# Conecte-se ao host SSH
-			ssh.connect(self.host, self.port, self.username, self.password)
-
-			# Execute um comando remoto
-			stdin, stdout, stderr = ssh.exec_command(getBootNormal)
-			# Obtenha a saída do comando
-			response = stdout.read().decode('utf-8').split('\n')
-			#print(response)
-			send=''
-			for i in response:
-				temp = self.handleBootNormal(i,Tests)
-				if temp: send = temp
-			print(send)
-			if send:
-				# Execute um comando remoto
-				stdin, stdout, stderr = ssh.exec_command(send)
-				# Obtenha a saída do comando
-				response = stdout.read().decode('utf-8').split('\n')
-				# Execute um comando remoto
-				if reboot:
-						stdin, stdout, stderr = ssh.exec_command(restart)
-
-			# Feche a conexão SSH
-			ssh.close()
-		
-
-
-
-	def check(self,serial_port=False,host=False):
-		#Verifica se já tem destino
-		if serial_port: self.serial_port = serial_port
-		elif host: self.host = host
-		#Verifica o destino
-		if self.serial_port: print('\ncheck from:'+self.serial_port)
-		elif self.host: print('\ncheck resets from:'+self.host)
-		
-		
-		if self.serial_port:
-			# Configuração da porta serial e parâmetros de comunicação
-			serial_baudrate = 115200
-			serial_timeout = 1
-			with serial.Serial(self.serial_port, serial_baudrate, timeout=serial_timeout) as ser:
-				ser.write('root\n'.encode())
-				# Aguarda a resposta
-				response = [0]
-				while response[-1] != '':
-					response.append(ser.readline().decode().strip())
-				serialCheck = self.checkReset+'\n'
-				ser.write(serialCheck.encode())
-
-				# Ler a resposta da fonte de alimentação
-				response = ' '
-				while (response!=''):
-					# Ler a resposta da fonte de alimentação
-					response = ser.readline().decode().strip()
-					print(response)
-				
-
-		if self.host:
-			# Crie um objeto SSHClient
-			ssh = paramiko.SSHClient()
-
-			# Defina uma política para lidar com chaves de host desconhecidas
-			ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-			# Conecte-se ao host SSH
-			ssh.connect(self.host, self.port, self.username, self.password)
-
-			# Execute um comando remoto
-			stdin, stdout, stderr = ssh.exec_command(self.checkReset)
-			# Obtenha a saída do comando
-			response = stdout.read().decode('utf-8').split('\n')
-			for i in response:
-				if i != '': print(i)
-
-			# Feche a conexão SSH
-			ssh.close()
 
 	def sendCMD(self,cmd='ls',serial_port=False,host=False):
 		#Verifica se já tem destino
@@ -420,59 +248,6 @@ class RTC_Test:
 			#print(output)
 			#self.obter_hora_servidor_ntp(self.servidor_ntp)
 			# Feche a conexão SSH
-			ssh.close()
-
-
-
-	def setAutostartLogdate(self,file='S99save_date',folder='/etc/init.d/'):
-		#Verifica o destino
-		if self.serial_port: print('\nsetAutostartLogdate to:'+self.serial_port)
-		elif self.host: print('\nsetAutostartLogdate to:'+self.host)
-		cmd = [
-			'mount / -o rw,remount',
-			'echo "hwclock -r >> /mnt/internal/config/dateFile" > '+folder+file,
-			'chmod +x '+folder+file,
-		]
-		
-		if self.serial_port:
-			# Configuração da porta serial e parâmetros de comunicação
-			serial_baudrate = 115200
-			serial_timeout = 1
-			with serial.Serial(self.serial_port, serial_baudrate, timeout=serial_timeout) as ser:
-				ser.write('root\n'.encode())
-				# Aguarda a resposta
-				response = [0]
-				while response[-1] != '':
-					response.append(ser.readline().decode().strip())
-				
-				for i in cmd:
-					#Habilita para gravação
-					i += '\n'
-					ser.write(i.encode())
-					# Aguarda a resposta
-					response = 'nan'
-					while response != '':
-						response = ser.readline().decode().strip()
-						print('>>',response)
-		
-		if self.host:
-			# Crie um objeto SSHClient
-			ssh = paramiko.SSHClient()
-
-			# Defina uma política para lidar com chaves de host desconhecidas
-			ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-			
-			# Conecte-se ao host SSH
-			ssh.connect(self.host, self.port, self.username, self.password)
-			
-			for i in cmd:
-				print('>>',i)
-				# Execute um comando remoto
-				stdin, stdout, stderr = ssh.exec_command(i.encode())
-				# Obtenha a saída do comando
-				output = stdout.read().decode('utf-8').split('\n')
-				for response in output: print('>>',response)
-
 			ssh.close()
 
 	def wrongDate(self,data_hora_string):
