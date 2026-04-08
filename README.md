@@ -1,102 +1,90 @@
 # 📊 CSVScope & Tools
 
-Este repositório reúne um conjunto de scripts Python voltados para
-automação de testes, análise de sinais e gerenciamento de firmware em
-ambientes embarcados e laboratoriais.
+Este repositório reúne ferramentas para automação de testes, análise de sinais, deploy de firmware e interação com dispositivos embarcados.
 
-------------------------------------------------------------------------
+---
 
 ## 🧭 Visão Geral
 
-``` mermaid
+```mermaid
 flowchart TD
 
 A[Início] --> B{Tipo de operação}
 
+%% ANALISE
 B -->|Análise de sinal| C[csvscope.py]
-C --> C1[Carregar CSV]
-C1 --> C2[Processar sinal]
-C2 --> C3[Plot / FFT / PAM]
+C --> C1[FFT / Plot / PAM]
+C --> H[engMath.py]
+C --> I[keysight.py]
 
-B -->|Detectar instrumento| D[detectScope.py]
-D --> D1[Listar VISA]
-D1 --> D2[Selecionar instrumento]
+%% INSTRUMENTO
+B -->|Instrumentação| D[detectScope.py]
+D --> I
 
+%% INSTALAÇÃO
 B -->|Instalar firmware| E[imageInstaller.py]
-E --> E1[Boot device]
-E1 --> E2[Entrar ONIE]
-E2 --> E3[Configurar rede]
-E3 --> E4[Instalar via HTTP]
+E --> E1[ONIE Install]
 
-B -->|Verificar versão| F[intranetVersionChecker.py]
-F --> F1[Consultar servidor]
-F1 --> F2{Atualizado?}
-F2 -->|Sim| F3[Fim]
-F2 -->|Não| F4[Download + limpar antigos]
+%% VERSIONAMENTO
+B -->|Atualização| F[intranetVersionChecker.py]
+F --> F1[Download FW]
 
-B -->|Deploy scripts| G[serializefile.py]
-G --> G1[Selecionar serial]
-G1 --> G2[Enviar arquivos .lua]
-G2 --> G3[Abrir terminal]
+%% DEPLOY
+B -->|Deploy Lua| G[serializefile.py]
+G --> K[dirHandle.py]
+
+%% RTC
+B -->|RTC Test| J[RTC_Test.py]
+J --> J1[NTP + SSH/Serial]
+
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 📦 Conteúdo
 
-### 🔹 `csvscope.py`
+### 🔹 csvscope.py
+Análise de sinais (FFT, plot, PAM)
 
-Classe principal para processamento e visualização de sinais de
-osciloscópios e instrumentos de medição.
+### 🔹 keysight.py
+Integração com osciloscópios Keysight (SCPI)
 
-**Principais funcionalidades:** - Leitura de múltiplos formatos CSV -
-Plotagem de sinais - FFT - Diagrama de olho (PAM) - Filtros digitais -
-Integração PyVISA
+### 🔹 engMath.py
+Conversões de engenharia (k, m, µ, etc.)
 
-------------------------------------------------------------------------
+### 🔹 detectScope.py
+Detecção de instrumentos VISA
 
-### 🔹 `detectScope.py`
+### 🔹 imageInstaller.py
+Instalação via ONIE
 
-Detecção de instrumentos VISA.
+### 🔹 intranetVersionChecker.py
+Gerenciamento de firmware
 
-------------------------------------------------------------------------
+### 🔹 serializefile.py
+Deploy de arquivos via serial
 
-### 🔹 `imageInstaller.py`
+### 🔹 dirHandle.py
+Utilitário de interface e arquivos
 
-Instalação automatizada via ONIE.
+### 🔹 RTC_Test.py
+Teste e sincronização de RTC
 
-------------------------------------------------------------------------
+---
 
-### 🔹 `intranetVersionChecker.py`
+## 🧠 Arquitetura
 
-Verificação e atualização de firmware.
+- **Core:** csvscope, imageInstaller, serializefile, RTC_Test  
+- **Integração:** keysight, detectScope  
+- **Utilitários:** engMath, dirHandle  
 
-------------------------------------------------------------------------
-
-### 🔹 `serializefile.py`
-
-Deploy serial de arquivos `.lua`.
-
-------------------------------------------------------------------------
-
-## 🚀 Exemplos
-
-``` python
-from csvscope import csvscope
-
-scope = csvscope("Teste")
-scope.format("file.csv")
-scope.plot()
-```
-
-------------------------------------------------------------------------
+---
 
 ## ⚙️ Requisitos
 
--   Python 3.8+
--   VISA instalado (opcional)
+Ver requirements.txt
 
-------------------------------------------------------------------------
+---
 
 ## 👨‍💻 Autor
 
