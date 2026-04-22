@@ -1176,7 +1176,7 @@ class csvscope:
 					y_ = y[i]
 					
 					cord=[[x_,y_],[None,None]]
-					text='p'+str(j)+': '+getEngSTR(x_*factor)+'Hz'
+					text='p'+str(j)+': '+getEngSTR(x_*factor,0)+'Hz'
 					style = '-'
 					dir = 'N'
 					serie['draw'].append([cord,text,style,dir])
@@ -1210,7 +1210,9 @@ class csvscope:
 					plt.text(area[0][0], area[1][1]*0.9, text, fontsize=10, color='red')
 				if 'ac_ripple_filter' in serie:
 					vpp_mv = serie['ac_ripple_filter']['vpp'] * 1e3
-					text = f"AC Ripple: {vpp_mv:.2f} mVpp in {self.fftZone} Hz"
+					strZonef1 = getEngSTR(self.fftZone[0],0)+"Hz"
+					strZonef2 = getEngSTR(self.fftZone[1],0)+"Hz"
+					text = f"AC Ripple: {vpp_mv:.2f} mVpp in {strZonef1} to {strZonef2}"
 					plt.text(area[0][0], area[1][1]*0.85, text, fontsize=10, color='blue')
 
 				for note in serie['draw']:

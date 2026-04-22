@@ -3,6 +3,7 @@ from datetime import datetime
 from time import sleep
 from fractions import Fraction
 from pprint import pprint
+import re
 
 
 '''
@@ -78,6 +79,10 @@ MEAS_MAP_KEYSIGHT = {
     # Dual channel
     "Delay": "DELay",
     "Phase": "PHASe",
+    
+    # Especiais
+    'FFT(vpp)': 'FFT(VPP)',
+    'FFT(fmax)':'FFT(XMAX)',
 }
 
 class KeysightScope:
@@ -184,7 +189,15 @@ class KeysightScope:
                         self.inst.write(f":MEASure:THResholds:ABSolute:LOWer {LOWer:.6f}")
                         self.inst.write(f":MEASure:THResholds:ABSolute:MIDDle {MIDDle:.6f}")
                         self.inst.write(f":MEASure:THResholds:ABSolute:UPPer {UPPer:.6f}")
-                    self.inst.write(f':MEASure:{v} CHANnel{ch}')
+                    
+                    if 'FFT' in v:
+                        func = re.search(r"\((.*?)\)", v).group(1)
+                        self.inst.write(f':FUNCtion1:OPERator FFT')
+                        self.inst.write(f':FUNCtion1:SOURce1 CHANnel{ch}')
+                        self.inst.write(f':FUNCtion1:DISPlay ON')
+                        self.inst.write(f':MEASure:{func} FUNCtion1')
+                    else:
+                        self.inst.write(f':MEASure:{v} CHANnel{ch}')
             if "text" in info:
                 txt = self.text4DSO(info['text'])
                 self.inst.write(f':DISPlay:ANN:STATe ON')

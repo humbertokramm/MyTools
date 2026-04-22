@@ -40,4 +40,4 @@ sendln 'ifconfig eth0 192.168.0.25 netmask 255.255.255.0 up'
 
 wait 'ONIE:/ #'
 ;sendln 'onie-nos-install http://192.168.0.15:8081/pd4201_ft-onie-installer-12.4.0-077-1-g7679fe209b.bin'
-sendln 'onie-nos-install http://192.168.0.15:8081/pd4201_ft-onie-installer-12.4.0-090-1-g700825010b.bin'
+sendln 'onie-nos-install http://192.168.0.15:8081/pd4201_ft-onie-installer-12.4.0-100-1-g01e218b5ed.bin'
