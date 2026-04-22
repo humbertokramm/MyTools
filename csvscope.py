@@ -122,6 +122,7 @@ class csvscope:
 		}
 		self.labelx='Time[ms]'
 		self.dt = [0.1,0.9]
+		self.fftZone = [None,None]
 		
 	def __str__(self):
 		return self.title
@@ -1079,6 +1080,20 @@ class csvscope:
 		fft = np.fft.fft(y)
 		fft[0] = 0
 		fftfreq = np.fft.fftfreq(len(y))*len(y)/(x.max()-x.min())
+		self.fftData(np.fft.ifft(fft).real,id,'ac_ripple')
+
+		y_filtered = False
+		if self.fftZone != [None,None]:
+			# ---- FILTRO PASSA-FAIXA (f_minHz a f_maxHz) ----
+			f_min = self.fftZone[0]
+			f_max = self.fftZone[1]
+			fft_filtered = fft.copy()
+			for i in range(len(fftfreq)):
+				if not (f_min <= abs(fftfreq[i]) <= f_max):
+					fft_filtered[i] = 0
+			# reconstrução no tempo (sinal filtrado)
+			y_filtered = np.fft.ifft(fft_filtered).real
+			self.fftData(y_filtered,id,'ac_ripple_filter')
 
 		a = []
 		b = []
@@ -1088,6 +1103,15 @@ class csvscope:
 				b.append(fft[i])
 		self.reads[id]['fft']={'f':a,'A':np.abs(b)}
 		if f: self.reads[id]['fft-tittle'] = f
+
+	def fftData(self, y,id,name):
+		vpp = np.max(y) - np.min(y)
+		vrms = np.sqrt(np.mean(y**2))
+		self.reads[id][name] = {
+			'vpp': vpp,
+			'vrms': vrms,
+		}
+
 
 	def plotFFT(self, t='Minhas Leituras',grid = True,size=(12, 6),axe='linear',out='png',mark=1,path='',transparent=False):
 		"""
@@ -1137,18 +1161,19 @@ class csvscope:
 					a = [float(i) / factor for i in serie['fft']['f']]
 					plt.xlabel("Domínio da Frequência ["+symbol+"Hz]")
 				
-				x=pd.DataFrame(a)
 				# Normalizando a amplitude
 				num_points = len(serie['fft']['A'])  # número total de pontos na série FFT
-				y=pd.DataFrame([amp*1e6 / num_points for amp in serie['fft']['A']])
+				x = np.array(a)
+				y = np.array([amp*1e6 / num_points for amp in serie['fft']['A']])
 
-				largestValuesIndex = y[0].nlargest(mark).index
+				largestValuesIndex = np.argsort(y)[-mark:][::-1]
 				j=0
 				serie['draw']=[]
 				for i in largestValuesIndex:
 					j+=1
-					y_ = y.loc[i,0]
-					x_ = x.loc[i,0]
+
+					x_ = x[i]
+					y_ = y[i]
 					
 					cord=[[x_,y_],[None,None]]
 					text='p'+str(j)+': '+getEngSTR(x_*factor)+'Hz'
@@ -1157,6 +1182,18 @@ class csvscope:
 					serie['draw'].append([cord,text,style,dir])
 				
 				plt.plot(x,y)
+				
+				# ---- Zona de interesse ----
+				if self.fftZone != [None,None]:
+					f_min = self.fftZone[0]
+					f_max = self.fftZone[1]
+					f_min_plot = f_min / factor
+					f_max_plot = f_max / factor
+					plt.axvspan(f_min_plot, f_max_plot, alpha=0.15, color='blue')
+					plt.axvline(f_min_plot, color='blue', linestyle='--', linewidth=1)
+					plt.axvline(f_max_plot, color='blue', linestyle='--', linewidth=1)
+				# ------
+
 				plt.grid(grid,which="both")
 				
 				temp={'x':x,'y':y}
@@ -1164,9 +1201,18 @@ class csvscope:
 				if serie['data'] != 'None':
 					if axe =='linear': textX=(area[1][0]-area[0][0])/2+area[0][0]
 					else: textX=np.sqrt(area[1][0])*np.sqrt(area[0][0])
-					textY= -max(area[1][1])/40
+					textY = -area[1][1] / 40
 					plt.text(textX,textY, serie['data'], ha='center', fontsize=8)
 				
+				if 'ac_ripple' in serie:
+					vpp_mv = serie['ac_ripple']['vpp'] * 1e3
+					text = f"AC Ripple: {vpp_mv:.2f} mVpp"
+					plt.text(area[0][0], area[1][1]*0.9, text, fontsize=10, color='red')
+				if 'ac_ripple_filter' in serie:
+					vpp_mv = serie['ac_ripple_filter']['vpp'] * 1e3
+					text = f"AC Ripple: {vpp_mv:.2f} mVpp in {self.fftZone} Hz"
+					plt.text(area[0][0], area[1][1]*0.85, text, fontsize=10, color='blue')
+
 				for note in serie['draw']:
 					#a=self.arrow(note,[area[2][1],area[2][1]])
 					a=self.arrow(note,[0,0])

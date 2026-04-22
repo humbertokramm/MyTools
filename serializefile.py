@@ -7,6 +7,8 @@ import sys
 import dirHandle as dh
 from datetime import datetime
 
+import argparse
+
 # ================= CONFIG =================
 DIRETORIO_LOCAL = "."
 DESTINO_REMOTO = "."
@@ -28,10 +30,14 @@ def ajustar_data_hora(ser):
     time.sleep(0.5)
 
 
+port = None
+if len(sys.argv) == 2:
+    port = sys.argv[1].upper()
+
 
 print("=== DEPLOY SERIAL DE ARQUIVOS LUA ===\n")
 
-ser = selecionar_e_abrir_porta(BAUDRATE)
+ser = selecionar_e_abrir_porta(BAUDRATE,port)
 
 if ser is None:
     print("Encerrando.")

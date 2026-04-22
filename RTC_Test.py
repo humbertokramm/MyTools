@@ -134,7 +134,7 @@ class RTC_Test:
 				while response[-1] != '':
 					response.append(ser.readline().decode().strip())
 				
-				self.obter_hora_servidor_ntp([self.servidor_ntp[1]],precision=True)
+				self.obter_hora_servidor_ntp([self.servidor_ntp[0]],precision=True)
 				# Enviar o comando para a fonte de alimentação
 				print('hora no SO e no RTC - ', end="")
 				inicio = self.marcatempo()
@@ -211,7 +211,7 @@ class RTC_Test:
 					response.append(ser.readline().decode().strip())
 				#print('response',response)
 				# Comando para definir a tensão de saída para 5V
-				hora_servidor = self.obter_hora_servidor_ntp([self.servidor_ntp[1]],precision=True)
+				hora_servidor = self.obter_hora_servidor_ntp([self.servidor_ntp[0]],precision=True)
 				inicio = self.marcatempo()
 				
 				data = self.creatCMD(hora_servidor,rtc,SO,wrong)
@@ -236,7 +236,7 @@ class RTC_Test:
 			# Conecte-se ao host SSH
 			ssh.connect(self.host, self.port, self.username, self.password)
 			
-			hora_servidor = self.obter_hora_servidor_ntp([self.servidor_ntp[1]],precision=True)
+			hora_servidor = self.obter_hora_servidor_ntp([self.servidor_ntp[0]],precision=True)
 			#print(hora_servidor[:19])
 			inicio = self.marcatempo()
 			data = self.creatCMD(hora_servidor,rtc,SO,wrong)

@@ -1,0 +1,43 @@
+; 1. Captura os argumentos vindos do Python (Porta e Baud)
+PORTA = param2
+BAUD  = param3
+
+; 2. Monta a string de conexão (Ex: /C=13 /BAUD=115200)
+COMMAND = '/C='
+strconcat COMMAND PORTA
+strconcat COMMAND ' /BAUD='
+strconcat COMMAND BAUD
+
+; 3. EFETUA A CONEXÃO (Isso resolve o erro da imagem)
+connect COMMAND
+
+
+; Carrega imagem na placa
+wait 'GNU GRUB'
+sendln 'c'
+sendln 'c'
+
+wait 'grub>'
+str = 'onie_rescue_bootcmd'
+i = 1
+strlen str
+len = result
+while i <= len
+    strcopy str i 1 ch
+    send ch
+    mpause 30   ; Atraso de 30ms entre caracteres
+    i = i + 1
+endwhile
+mpause 100
+sendln ''
+
+
+wait 'Please press Enter to activate this console.'
+sendln ''
+
+wait 'ONIE:/ #'
+sendln 'ifconfig eth0 192.168.0.25 netmask 255.255.255.0 up'
+
+wait 'ONIE:/ #'
+;sendln 'onie-nos-install http://192.168.0.15:8081/pd4201_ft-onie-installer-12.4.0-077-1-g7679fe209b.bin'
+sendln 'INSTALL_CMD'

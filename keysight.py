@@ -13,6 +13,7 @@ from pprint import pprint
 | Vpp                | `VPP`       |
 | Vtop               | `VTOP`      |
 | Vbase              | `VBASE`     |
+| Vamp               | `VAMP`      |
 | Vavg (full screen) | `VAVerage`  |
 | Vrms               | `VRMS`      |
 | Overshoot          | `OVERshoot` |
@@ -55,6 +56,7 @@ MEAS_MAP_KEYSIGHT = {
     "Vpp": "VPP",
     "Vtop": "VTOP",
     "Vbase": "VBASE",
+    "Vamp": "VAMP",
     "Vavg": "VAVerage",
     "Vrms": "VRMS",
 
@@ -105,7 +107,6 @@ class KeysightScope:
 
         voltage = (raw - yref) * yinc + yorig
         time = np.arange(len(raw)) * xinc + xorig
-
         metadata = {
             "Instrumento": self.inst.query("*IDN?").strip(),
             "Canal": channel,
@@ -165,6 +166,7 @@ class KeysightScope:
                 value = info['label']
                 self.inst.write(f':CHANnel{ch}:LABel "{value}"')
                 self.inst.write(f':CHANnel{ch}:LABel:STATe ON')
+                self.inst.write(':DISPlay:LABel ON')
             if 'cursor' in info:
                 self.inst.write(f':CURSor:MODE MANual')
                 self.inst.write(f':CURSor:Y1 0')
@@ -184,12 +186,16 @@ class KeysightScope:
                         self.inst.write(f":MEASure:THResholds:ABSolute:UPPer {UPPer:.6f}")
                     self.inst.write(f':MEASure:{v} CHANnel{ch}')
             if "text" in info:
-                value = info['text']
-                self.inst.write(f':DISPlay:ANN:TEXT "{value}"')
+                txt = self.text4DSO(info['text'])
                 self.inst.write(f':DISPlay:ANN:STATe ON')
-                self.inst.write(f':DISPlay:ANN:X 10')
+                self.inst.write(f':DISPlay:ANN:TEXT "{txt}"')
                 self.inst.write(f':DISPlay:ANN:Y 10')
-                
+                self.inst.write(f':DISPlay:ANN:X 10')
+    
+    def text4DSO(self, txt):
+        pos = txt.find(" - ")
+        return txt.replace(' - ',' '*(31-pos))
+    
     def map_measure(self, meas):
         if meas in MEAS_MAP_KEYSIGHT:
             return MEAS_MAP_KEYSIGHT[meas]

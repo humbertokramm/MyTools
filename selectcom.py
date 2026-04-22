@@ -6,7 +6,7 @@ import time
 BAUDRATE_PADRAO = 115200
 
 
-def listar_portas(noPrint = False):
+def listar_portas(noPrint = False,port=None):
     portas = list(serial.tools.list_ports.comports())
     if noPrint: return portas
     
@@ -15,15 +15,16 @@ def listar_portas(noPrint = False):
         return []
 
     print("\nPortas seriais disponíveis:\n")
-
+    match=None
     for i, porta in enumerate(portas):
         #print(f"[{i}] {porta.device}")
         print(f"     {i} -> {porta.device}\t{porta.description}",end="\t")
         print(f"Brand: {porta.manufacturer}")
+        if port == porta.device: match = i
         #print(f"     HWID      : {porta.hwid}")
         #print()
 
-    return portas
+    return portas,match
 
 def abrir_porta(porta, baudrate=BAUDRATE_PADRAO):
     try:
@@ -44,15 +45,17 @@ def abrir_porta(porta, baudrate=BAUDRATE_PADRAO):
         return None
 
 
-def selecionar_e_abrir_porta(baudrate=BAUDRATE_PADRAO):
+def selecionar_e_abrir_porta(baudrate=BAUDRATE_PADRAO,port=None):
     while True:
-        portas = listar_portas()
+        portas,match = listar_portas(port=port)
 
         if not portas:
             return None
-
+            
         try:
-            escolha = int(input("Selecione o número da porta desejada: "))
+            if match != None:
+                escolha  = match
+            else: escolha = int(input("Selecione o número da porta desejada: "))
             if 0 <= escolha < len(portas):
                 porta = portas[escolha].device
                 ser = abrir_porta(porta, baudrate)

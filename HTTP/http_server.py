@@ -3,9 +3,33 @@ import os
 import threading
 import tkinter as tk
 from http.server import SimpleHTTPRequestHandler, HTTPServer
-
+import subprocess
 from intranetVersionChecker import check_update, update_local
 
+
+
+# -------------------------------
+# Macro do teraterm
+# -------------------------------
+
+def executar_macro(arquivo,IP,PORT):
+
+    install_cmd = f"onie-nos-install http://{IP}:{PORT}/{arquivo}"
+
+    with open("insertImage.ttl", "r") as f:
+        conteudo = f.read()
+
+    conteudo = conteudo.replace("INSTALL_CMD", install_cmd)
+
+    macro_path = "C:\\Testes\\MyTools\\HTTP\\auto_install.ttl"
+
+    with open(macro_path, "w") as f:
+        f.write(conteudo)
+
+    # caminho do ttermpro (ajusta se necessário)
+    tterm = r"C:\\Program Files\\teraterm5\\ttpmacro.exe"
+
+    subprocess.Popen([tterm, macro_path, "13", "115200"])
 
 # -------------------------------
 # servidor HTTP
@@ -17,7 +41,8 @@ def run_server(IP, PORT):
     print("running server...")
     print("IP:", IP, "| Port:", PORT)
 
-    httpd.handle_request()
+    #httpd.handle_request()
+    httpd.serve_forever()
 
     print("server stopped...")
     exit()
@@ -144,7 +169,7 @@ def start_gui(IP, PORT):
             cmd_install = BASE_LINK + arquivo
 
             # função helper pra linha
-            def criar_linha(texto):
+            def criar_linha(texto, is_install=False):
 
                 linha = tk.Frame(bloco)
                 linha.pack(anchor="w", pady=1)
@@ -162,10 +187,18 @@ def start_gui(IP, PORT):
                     anchor="w"
                 ).pack(side="left", padx=5)
 
+                # 🔥 botão novo
+                if is_install:
+                    tk.Button(
+                        linha,
+                        text="Auto (TeraTerm)",
+                        command=lambda a=arquivo: executar_macro(a,host,porta)
+                    ).pack(side="left", padx=5)
+
             # cria as 3 linhas
             criar_linha(cmd_rescue)
             criar_linha(cmd_ifconfig)
-            criar_linha(cmd_install)
+            criar_linha(cmd_install, is_install=True)
 
     # inicializa lista
     atualizar_lista()

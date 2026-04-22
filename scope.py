@@ -2,6 +2,7 @@ import pyvisa
 import csv
 import detectScope as DS
 import os
+import dirHandle as dh
 
 from tektronix import TektronixScope
 from keysight import KeysightScope
@@ -29,7 +30,12 @@ class Scope:
         # -------------------------------------------------
 
         self.rm = pyvisa.ResourceManager()
-        self.inst = self.rm.open_resource(resource)
+        try:
+            self.inst = self.rm.open_resource(resource)
+        except:
+            dh.Aviso(f"Erro ao conectar em:",'vermelho')
+            print(f'RESOURCE = "{resource}"')
+            exit()
 
         self.inst.timeout = 10000
 
