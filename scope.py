@@ -28,14 +28,15 @@ class Scope:
         # -------------------------------------------------
         # connect VISA
         # -------------------------------------------------
-
         self.rm = pyvisa.ResourceManager()
-        try:
-            self.inst = self.rm.open_resource(resource)
-        except:
-            dh.Aviso(f"Erro ao conectar em:",'vermelho')
-            print(f'RESOURCE = "{resource}"')
-            exit()
+        for tentativa in range(3):
+            try:
+                self.inst = self.rm.open_resource(resource)
+                break
+            except:
+                dh.Aviso(f"Erro na tentativa {tentativa+1} ao conectar em:",'vermelho')
+                print(f'RESOURCE = "{resource}"')
+                if tentativa > 1: exit()
 
         self.inst.timeout = 10000
 

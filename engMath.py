@@ -1,4 +1,5 @@
 import numpy as np
+from pprint import pprint
 
 EngNotation ={
     'Y':	1e24 ,	'Z':	1e21 ,	'E':	1e18 ,	'P':	1e15 ,	'T':	1e12 ,	'G':	1e9  ,
@@ -45,7 +46,7 @@ def getEng(nota,s=False):
     if s == True: return nota+qt
     return EngNotation[nota]
 
-def getEngSTR(number,casas = 2):
+def getEngSTR(number,casas = 2, string = True):
     """
     Converte um número para notação de engenharia em string.
     
@@ -67,7 +68,13 @@ def getEngSTR(number,casas = 2):
         0: '', 3: 'k', 6: 'M', 9: 'G', 12: 'T', 15: 'P', 18: 'E', 21: 'Z', 24: 'Y', 27: 'R', 30: 'Q'
     }
     eng_notation_string = "{:.{}f} {}".format(number / 10 ** exponent, casas, unit.get(exponent, ''))
-    return eng_notation_string
+    if string: return eng_notation_string
+    else: return {
+        'value': number / 10 ** exponent,
+        'casas': casas, 
+        'unit': unit.get(exponent, ''),
+        'fator': 10 ** exponent,
+        }
 
 def getValue(number,s,axe,casas = 2):
     """
@@ -103,3 +110,7 @@ def getValue(number,s,axe,casas = 2):
     if axe == 'v/t':
         return getEngSTR(number*s['engNoteX']*1e6,casas)+'V/µs'
     return 'ERROR: getValue(axe = '+axe+')' 
+
+def auto_scale(array):
+    span = np.max(array) - np.min(array)
+    return getEngSTR(span,string=False)

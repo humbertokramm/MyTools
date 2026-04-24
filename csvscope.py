@@ -64,6 +64,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import numpy as np
+import matplotlib.colors as mcolors
 import csv
 from copy import copy,deepcopy
 from scipy.signal import welch
@@ -122,8 +123,9 @@ class csvscope:
 		}
 		self.labelx='Time[ms]'
 		self.dt = [0.1,0.9]
-		self.fftZone = [None,None]
-		
+		self.fftZone = None
+		self.fftZonetxt = 'left'
+		self.fftylabel = "auto"
 	def __str__(self):
 		return self.title
 
@@ -825,20 +827,35 @@ class csvscope:
 			return
 		return
 
-	def areaGraf(self, serie,area=None):
-		min = 0
-		max = 1
-		x = 0
-		y = 1
+	def areaGraf(self, serie,axe,area=None):
+
 
 		if area == None:
-			area =  [[serie['x'].min(),serie['y'].min()], [serie['x'].max(),serie['y'].max()],[2,1]]
-			return area
+			area =  {
+				'xMin':serie['x'].min(),
+				'yMin':serie['y'].min(),
+				'xMax':serie['x'].max(),
+				'yMax':serie['y'].max(),
+			}
+		else:
+			if area['yMin'] >= serie['y'].min(): area['yMin'] = serie['y'].min()
+			if area['xMin'] >= serie['x'].min(): area['xMin'] = serie['x'].min()
+			if area['yMax'] <= serie['y'].max(): area['yMax'] = serie['y'].max()
+			if area['xMax'] <= serie['x'].max(): area['xMax'] = serie['x'].max()
 
-		if area[min][y] >= serie['y'].min(): area[min][y] = serie['y'].min()
-		if area[min][x] >= serie['x'].min(): area[min][x] = serie['x'].min()
-		if area[max][y] <= serie['y'].max(): area[max][y] = serie['y'].max()
-		if area[max][x] <= serie['x'].max(): area[max][x] = serie['x'].max()
+		if axe =='linear': area['xCenter']=(area['xMax']-area['xMin'])/2+area['xMin']
+		else: area['xCenter']=np.sqrt(area['xMax'])*np.sqrt(area['xMin'])
+
+		if self.fftZonetxt == 'center':
+			area['xTxt'] = area['xCenter']
+			area['ha'] ='center'
+		elif self.fftZonetxt == 'right':
+			area['xTxt'] = area['xMax']
+			area['ha']='right'
+		else:
+			area['xTxt'] = area['xMin']
+			area['ha']='left'
+
 		return area
 
 	def areaGraf4(self, serie):
@@ -1080,20 +1097,15 @@ class csvscope:
 		fft = np.fft.fft(y)
 		fft[0] = 0
 		fftfreq = np.fft.fftfreq(len(y))*len(y)/(x.max()-x.min())
-		self.fftData(np.fft.ifft(fft).real,id,'ac_ripple')
+		self.ifftData(fft,id,'ac_ripple',f=[fftfreq[1],fftfreq[-1]])
 
-		y_filtered = False
-		if self.fftZone != [None,None]:
-			# ---- FILTRO PASSA-FAIXA (f_minHz a f_maxHz) ----
-			f_min = self.fftZone[0]
-			f_max = self.fftZone[1]
-			fft_filtered = fft.copy()
-			for i in range(len(fftfreq)):
-				if not (f_min <= abs(fftfreq[i]) <= f_max):
-					fft_filtered[i] = 0
-			# reconstrução no tempo (sinal filtrado)
-			y_filtered = np.fft.ifft(fft_filtered).real
-			self.fftData(y_filtered,id,'ac_ripple_filter')
+		# ---- Zona de interesse ----
+		if self.fftZone is not None and len(self.fftZone) > 0:
+			self.fftZone = self.fftZone if isinstance(self.fftZone[0], list) else [self.fftZone]
+			for zone in self.fftZone:
+				if zone[0] == 'start': zone[0] = fftfreq[1]
+				if zone[1] == 'end': zone[1] = np.max(fftfreq)
+				self.fftFilter(fft,fftfreq,id,f=zone)
 
 		a = []
 		b = []
@@ -1104,14 +1116,26 @@ class csvscope:
 		self.reads[id]['fft']={'f':a,'A':np.abs(b)}
 		if f: self.reads[id]['fft-tittle'] = f
 
-	def fftData(self, y,id,name):
+	def ifftData(self,fft,id,name,f=[None,None]):
+		# reconstrução no tempo
+		y = np.fft.ifft(fft).real
 		vpp = np.max(y) - np.min(y)
 		vrms = np.sqrt(np.mean(y**2))
-		self.reads[id][name] = {
+		if not name in self.reads[id]:
+			self.reads[id][name] = []
+		self.reads[id][name].append({
 			'vpp': vpp,
 			'vrms': vrms,
-		}
-
+			'f_min': f[0],
+			'f_max': f[1],
+		})
+	# ---- FILTRO PASSA-FAIXA (f_minHz a f_maxHz) ----
+	def fftFilter(self,fft,fftfreq,id,f=[None,None]):
+		fft_filtered = fft.copy()
+		for i in range(len(fftfreq)):
+			if not (f[0] <= abs(fftfreq[i]) <= f[1]):
+				fft_filtered[i] = 0
+		self.ifftData(fft_filtered,id,'ac_ripple_filter',f=f)
 
 	def plotFFT(self, t='Minhas Leituras',grid = True,size=(12, 6),axe='linear',out='png',mark=1,path='',transparent=False):
 		"""
@@ -1149,8 +1173,20 @@ class csvscope:
 			if 'fft' in serie:
 				plt.subplots(figsize=size)
 				plt.title(t)
+
+				num_points = len(serie['fft']['A'])  # número total de pontos na série FFT
+				yInterval = [min(serie['fft']['A'])/num_points,max(serie['fft']['A'])/num_points]
+				yMeta = auto_scale(yInterval)
+				
+				if self.fftylabel == "auto":
+					self.fftylabel = f"Amplitude [{yMeta['unit']}V]"
+					yfator = yMeta['fator']
+				else: 
+					yfator = 1e-6
+					self.fftylabel = "Amplitude [µV]"
+
 				plt.xlabel("Domínio da Frequência [Hz]")
-				plt.ylabel("Amplitude [µV]")
+				plt.ylabel(self.fftylabel)
 
 				a=serie['fft']['f']
 				factor = 1
@@ -1162,9 +1198,8 @@ class csvscope:
 					plt.xlabel("Domínio da Frequência ["+symbol+"Hz]")
 				
 				# Normalizando a amplitude
-				num_points = len(serie['fft']['A'])  # número total de pontos na série FFT
 				x = np.array(a)
-				y = np.array([amp*1e6 / num_points for amp in serie['fft']['A']])
+				y = np.array([(amp/yfator) / num_points for amp in serie['fft']['A']])
 
 				largestValuesIndex = np.argsort(y)[-mark:][::-1]
 				j=0
@@ -1182,41 +1217,37 @@ class csvscope:
 					serie['draw'].append([cord,text,style,dir])
 				
 				plt.plot(x,y)
-				
-				# ---- Zona de interesse ----
-				if self.fftZone != [None,None]:
-					f_min = self.fftZone[0]
-					f_max = self.fftZone[1]
-					f_min_plot = f_min / factor
-					f_max_plot = f_max / factor
-					plt.axvspan(f_min_plot, f_max_plot, alpha=0.15, color='blue')
-					plt.axvline(f_min_plot, color='blue', linestyle='--', linewidth=1)
-					plt.axvline(f_max_plot, color='blue', linestyle='--', linewidth=1)
-				# ------
 
 				plt.grid(grid,which="both")
 				
 				temp={'x':x,'y':y}
-				area = self.areaGraf(temp)
+				area = self.areaGraf(temp,axe)
 				if serie['data'] != 'None':
-					if axe =='linear': textX=(area[1][0]-area[0][0])/2+area[0][0]
-					else: textX=np.sqrt(area[1][0])*np.sqrt(area[0][0])
-					textY = -area[1][1] / 40
-					plt.text(textX,textY, serie['data'], ha='center', fontsize=8)
+					textY = -area['yMax'] / 40
+					plt.text(area['xCenter'],textY, serie['data'], ha='center', fontsize=8)
 				
 				if 'ac_ripple' in serie:
-					vpp_mv = serie['ac_ripple']['vpp'] * 1e3
-					text = f"AC Ripple: {vpp_mv:.2f} mVpp"
-					plt.text(area[0][0], area[1][1]*0.9, text, fontsize=10, color='red')
-				if 'ac_ripple_filter' in serie:
-					vpp_mv = serie['ac_ripple_filter']['vpp'] * 1e3
-					strZonef1 = getEngSTR(self.fftZone[0],0)+"Hz"
-					strZonef2 = getEngSTR(self.fftZone[1],0)+"Hz"
-					text = f"AC Ripple: {vpp_mv:.2f} mVpp in {strZonef1} to {strZonef2}"
-					plt.text(area[0][0], area[1][1]*0.85, text, fontsize=10, color='blue')
+					vpp = getEngSTR(serie['ac_ripple'][0]['vpp'],2)
+					text = f"AC Ripple: {vpp}Vpp"
+					plt.text(area['xTxt'], area['yMax']*0.9, text,ha=area['ha'], fontsize=10, color='black')
+
+				if self.fftZone != None:
+					line = 0.9
+					for iZone, vZone in enumerate(serie['ac_ripple_filter']):
+						ZoneColor = list(mcolors.BASE_COLORS.keys())[iZone]
+						line -= 0.05
+						vpp = getEngSTR(vZone['vpp'],2)
+						strZonef1 = getEngSTR(vZone['f_min'],0)+"Hz"
+						strZonef2 = getEngSTR(vZone['f_max'],0)+"Hz"
+						text = f"AC Ripple: {vpp}Vpp in {strZonef1} to {strZonef2}"
+						plt.text(area['xTxt'], area['yMax']*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
+						f_min_plot = vZone['f_min'] / factor
+						f_max_plot = vZone['f_max'] / factor
+						plt.axvspan(f_min_plot, f_max_plot, alpha=0.15, color=ZoneColor)
+						plt.axvline(f_min_plot, color=ZoneColor, linestyle='--', linewidth=1)
+						plt.axvline(f_max_plot, color=ZoneColor, linestyle='--', linewidth=1)
 
 				for note in serie['draw']:
-					#a=self.arrow(note,[area[2][1],area[2][1]])
 					a=self.arrow(note,[0,0])
 					#plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],arrowprops=dict(arrowstyle=a['arrowstyle'], linestyle=a['linestyle']))
 					plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],ha=a['ha'],va=a['va'],arrowprops=a['props'])
