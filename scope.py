@@ -3,6 +3,7 @@ import csv
 import detectScope as DS
 import os
 import dirHandle as dh
+from time import sleep
 
 from tektronix import TektronixScope
 from keysight import KeysightScope
@@ -23,19 +24,22 @@ class Scope:
             else:
                 print(f"resource = {resource}")
 
-        self.resource = resource
+        
 
         # -------------------------------------------------
         # connect VISA
         # -------------------------------------------------
-        self.rm = pyvisa.ResourceManager()
+        
         for tentativa in range(3):
             try:
+                self.resource = resource
+                self.rm = pyvisa.ResourceManager()
                 self.inst = self.rm.open_resource(resource)
                 break
             except:
                 dh.Aviso(f"Erro na tentativa {tentativa+1} ao conectar em:",'vermelho')
                 print(f'RESOURCE = "{resource}"')
+                sleep(2)
                 if tentativa > 1: exit()
 
         self.inst.timeout = 10000
@@ -78,8 +82,12 @@ class Scope:
         filename += ".csv"
         if self.checkExistentFile(filename):
             return
-        time, voltage, metadata = self.driver.capture_waveform(channel)
-
+        try: 
+            time, voltage, metadata = self.driver.capture_waveform(channel)
+        except RuntimeError as e:
+            dh.Aviso(e,'vermelho')
+            return None, None, None
+        
         with open(filename, "w") as f:
 
             for k, v in metadata.items():
