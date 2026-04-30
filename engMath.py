@@ -1,5 +1,6 @@
 import numpy as np
 from pprint import pprint
+from datetime import datetime
 
 EngNotation ={
     'Y':	1e24 ,	'Z':	1e21 ,	'E':	1e18 ,	'P':	1e15 ,	'T':	1e12 ,	'G':	1e9  ,
@@ -114,3 +115,35 @@ def getValue(number,s,axe,casas = 2):
 def auto_scale(array):
     span = np.max(array) - np.min(array)
     return getEngSTR(span,string=False)
+
+def normaliza_data(valor):
+    # Se já for datetime
+    if isinstance(valor, datetime):
+        dt = valor
+
+    # Se for timestamp (float/int)
+    elif isinstance(valor, (int, float)):
+        dt = datetime.fromtimestamp(valor)
+
+    # Se for string (CSV)
+    elif isinstance(valor, str):
+        formatos = [
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%d/%m/%Y - %H:%M:%S.%f",
+            "%d/%m/%Y - %H:%M:%S",
+        ]
+
+        for fmt in formatos:
+            try:
+                dt = datetime.strptime(valor, fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            raise ValueError(f"Formato desconhecido: {valor}")
+
+    else:
+        raise TypeError(f"Tipo não suportado: {type(valor)}")
+
+    return dt.strftime("%d/%m/%Y - %H:%M:%S")

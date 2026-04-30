@@ -71,7 +71,7 @@ from scipy.signal import welch
 from scipy.signal import find_peaks
 from scipy import signal
 import os
-import datetime
+from datetime import datetime
 from pprint import pprint
 import pyvisa
 import optparse
@@ -254,7 +254,8 @@ class csvscope:
 					instrumento = partes[1].strip()
 				
 				if linha.startswith("# Data da captura:"):
-					data = linha.split(": ", 1)[1].strip()
+					data_raw = linha.split(": ", 1)[1].strip()
+					data = normaliza_data(data_raw)
 		
 		# Ler dataframe ignorando comentários
 		df = pd.read_csv(file, comment="#", encoding='latin-1')
@@ -270,10 +271,8 @@ class csvscope:
 			f = f+'.csv'
 		
 		brd = self.detectBrandFile(f)
-		info = os.stat(f).st_ctime
-		info = datetime.datetime.fromtimestamp(info)
-		info = str(info)[:16]
-
+		infoFile = os.stat(f).st_ctime
+		info = normaliza_data(infoFile)
 
 		if brd == 'TDS3052B':
 			df = pd.read_csv(f)
