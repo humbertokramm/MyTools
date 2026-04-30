@@ -95,12 +95,22 @@ class KeysightScope:
 
     def capture_waveform(self, channel):
         print("lendo: ",channel) 
-        ch = channel.replace("CH", "")
-        self.inst.write(f":WAV:SOUR CHANnel{ch}")
+        ch = self.channel_name(channel)
+        
+        # Verifica se o canal está ativo
+        disp = int(self.inst.query(f":{ch}:DISP?"))
+        if disp == 0:
+            raise RuntimeError(f"Canal {channel} não está exibido na tela")
+        
+        self.inst.write(f":WAV:SOUR {ch}")
         self.inst.write(":WAV:FORM BYTE")
         self.inst.write(":WAV:MODE RAW")
 
-        xinc = float(self.inst.query(":WAV:XINC?"))
+        try:
+            xinc = float(self.inst.query(":WAV:XINC?"))
+        except Exception:
+            raise RuntimeError(f"Canal {channel} não possui waveform válido")
+        
         xorig = float(self.inst.query(":WAV:XOR?"))
 
         yinc = float(self.inst.query(":WAV:YINC?"))
@@ -132,19 +142,15 @@ class KeysightScope:
             return value
 
     def get_channel_settings(self, channel):
-        ch = channel.replace("CH", "")
-        coupling = self.inst.query(f":CHANnel{ch}:COUPling?").strip()
-        probe = self.inst.query(f":CHANnel{ch}:PROBe?").strip()
-        scale = self.inst.query(f":CHANnel{ch}:SCALe?").strip()
-        invert = self.inst.query(f":CHANnel{ch}:INVert?").strip()
-        bw = self.inst.query(f":CHANnel{ch}:BWLimit?").strip()
-        return {
-            "coupling": coupling,
-            "probe_attenuation": self.parse_probe_attenuation(probe) + "x",
-            "vertical_scale": f"{scale} V/div",
-            "inverted": "ON" if invert == "1" else "OFF",
-            "BW": "ON" if bw == "1" else "OFF"
-        }
+        res = {}
+        channel = self.channel_name(channel)
+        if "CH" in channel:
+            res['coupling'] = self.inst.query(f":{channel}:COUPling?").strip()
+            probe = self.inst.query(f":{channel}:PROBe?").strip()
+            res["inverted"] = "ON" if self.inst.query(f":{channel}:INVert?").strip() == "1" else "OFF"
+            res["BW"] = "ON" if self.inst.query(f":{channel}:BWLimit?").strip() == "1" else "OFF"
+        res['vertical_scale'] = f"{self.inst.query(f":{channel}:SCALe?").strip()} V/div"
+        return res
     
     def capture_screen(self):
         self.inst.write(':SAVE:IMAGe:FORMat PNG')
@@ -159,18 +165,25 @@ class KeysightScope:
         )
         self.inst.write(f':DISPlay:ANN:TEXT ""')
         return image
-    
+
+    def channel_name(self, channel):
+        if "MATH" in channel:
+            ch = "FUNCtion"
+        else:
+            ch = "CHANnel"+ channel.replace("CH", "")
+        return ch
+
     def set_channel_settings(self, channel,info):
-        ch = channel.replace("CH", "")
         now = datetime.now()
         self.inst.write(f":SYSTem:DATE {now.year},{now.month},{now.day}")
         self.inst.write(f":SYSTem:TIME {now.hour},{now.minute},{now.second}")
         
+        channel = self.channel_name(channel)
         if info:
             if "label" in info:
                 value = info['label']
-                self.inst.write(f':CHANnel{ch}:LABel "{value}"')
-                self.inst.write(f':CHANnel{ch}:LABel:STATe ON')
+                self.inst.write(f':{channel}:LABel "{value}"')
+                self.inst.write(f':{channel}:LABel:STATe ON')
                 self.inst.write(':DISPlay:LABel ON')
             if 'cursor' in info:
                 self.inst.write(f':CURSor:MODE MANual')
@@ -193,11 +206,11 @@ class KeysightScope:
                     if 'FFT' in v:
                         func = re.search(r"\((.*?)\)", v).group(1)
                         self.inst.write(f':FUNCtion1:OPERator FFT')
-                        self.inst.write(f':FUNCtion1:SOURce1 CHANnel{ch}')
+                        self.inst.write(f':FUNCtion1:SOURce1 {channel}')
                         self.inst.write(f':FUNCtion1:DISPlay ON')
                         self.inst.write(f':MEASure:{func} FUNCtion1')
                     else:
-                        self.inst.write(f':MEASure:{v} CHANnel{ch}')
+                        self.inst.write(f':MEASure:{v} {channel}')
             if "text" in info:
                 txt = self.text4DSO(info['text'])
                 self.inst.write(f':DISPlay:ANN:STATe ON')

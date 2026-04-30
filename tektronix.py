@@ -36,6 +36,7 @@ MEAS_MAP_TEKTRONIX = {
     "Vmax": "MAXimum",
     "Vmin": "MINImum",
     "Vpp": "PK2pk",
+    "Vamp": "AMPlitude",
     "Vtop": "HIGH",
     "Vbase": "LOW",
     "Vavg": "MEAN",
@@ -189,6 +190,7 @@ class TektronixScope:
             #    self.inst.write(f'MEASU:MEAS{i}:STATE OFF')
 
             for i, v in enumerate(info['meas'], start=1):
+                value = self.map_measure(v)
                 if i < 5:
                     if v == None:
                         self.inst.write(f'MEASU:MEAS{i}:STATE OFF')
@@ -198,7 +200,7 @@ class TektronixScope:
                         time.sleep(delay)
                         self.inst.write(f":MEASU:MEAS{i}:SOURCE1 CH{ch}")
                         time.sleep(delay)
-                        self.inst.write(f":MEASU:MEAS{i}:TYPE {v}")
+                        self.inst.write(f":MEASU:MEAS{i}:TYPE {value}")
                         time.sleep(delay)
 
         if "text" in info:
