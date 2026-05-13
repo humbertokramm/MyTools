@@ -65,25 +65,24 @@ MEAS_MAP_TEKTRONIX = {
 
 class TektronixScope:
 
-    def __init__(self, inst):
-
+    def __init__(self, inst,debug=False):
         self.inst = inst
-
+        self.debug = debug
 
     # ---------------------------------------------------------
     # WAVEFORM
     # ---------------------------------------------------------
     def capture_waveform(self, channel):
 
-        self.inst.write(f"DATA:SOURCE {channel}")
-        self.inst.write("DATA:WIDTH 1")
-        self.inst.write("DATA:ENC RPB")
+        self.sendData(f"DATA:SOURCE {channel}")
+        self.sendData("DATA:WIDTH 1")
+        self.sendData("DATA:ENC RPB")
 
         # ESSENCIAL
-        self.inst.write("DATA:RESOLUTION REDUCED")
+        self.sendData("DATA:RESOLUTION REDUCED")
 
-        self.inst.write("DATA:START 1")
-        self.inst.write("DATA:STOP 10000")  # opcional (display típico)
+        self.sendData("DATA:START 1")
+        self.sendData("DATA:STOP 10000")  # opcional (display típico)
 
         ymult = float(self.inst.query("WFMPRE:YMULT?"))
         yzero = float(self.inst.query("WFMPRE:YZERO?"))
@@ -140,8 +139,8 @@ class TektronixScope:
     # ---------------------------------------------------------
     def capture_screen(self):
 
-        self.inst.write("HARDCopy:FORMat PNG")
-        self.inst.write("HARDCopy STARt")
+        self.sendData("HARDCopy:FORMat PNG")
+        self.sendData("HARDCopy STARt")
 
         data = self.inst.read_raw()
 
@@ -161,9 +160,9 @@ class TektronixScope:
         hora_formatada = now.strftime("%H:%M:%S")
 
 
-        self.inst.write(f':DATE "{data_formatada}"')
+        self.sendData(f':DATE "{data_formatada}"')
         time.sleep(delay)
-        self.inst.write(f':TIME "{hora_formatada}"')
+        self.sendData(f':TIME "{hora_formatada}"')
         time.sleep(delay)
 
 
@@ -172,42 +171,51 @@ class TektronixScope:
 
         if "label" in info:
             value = info["label"]
-            self.inst.write(f':CH{ch}:LAB "{value}"')
+            self.sendData(f':CH{ch}:LAB "{value}"')
             time.sleep(delay)
-            self.inst.write(f':CH{ch}:LAB:STATE ON')
+            self.sendData(f':CH{ch}:LAB:STATE ON')
             time.sleep(delay)
 
         if 'cursor' in info:
-            self.inst.write(":CURSOR:STATE ON")
+            self.sendData(":CURSOR:STATE ON")
             time.sleep(delay)
-            self.inst.write(":CURSOR:MODE MANUAL")
+            self.sendData(":CURSOR:MODE MANUAL")
             time.sleep(delay)
-            self.inst.write(f":CURSOR:SOUR CH{ch}")
+            self.sendData(f":CURSOR:SOUR CH{ch}")
             time.sleep(delay)
 
         if 'meas' in info:
             #for i in range(1, 5):
-            #    self.inst.write(f'MEASU:MEAS{i}:STATE OFF')
+            #    self.sendData(f'MEASU:MEAS{i}:STATE OFF')
 
             for i, v in enumerate(info['meas'], start=1):
                 value = self.map_measure(v)
                 if i < 5:
                     if v == None:
-                        self.inst.write(f'MEASU:MEAS{i}:STATE OFF')
+                        self.sendData(f'MEASU:MEAS{i}:STATE OFF')
                         time.sleep(delay)
                     elif v != "":
-                        self.inst.write(f'MEASU:MEAS{i}:STATE ON')
+                        self.sendData(f'MEASU:MEAS{i}:STATE ON')
                         time.sleep(delay)
-                        self.inst.write(f":MEASU:MEAS{i}:SOURCE1 CH{ch}")
+                        self.sendData(f":MEASU:MEAS{i}:SOURCE1 CH{ch}")
                         time.sleep(delay)
-                        self.inst.write(f":MEASU:MEAS{i}:TYPE {value}")
+                        self.sendData(f":MEASU:MEAS{i}:TYPE {value}")
                         time.sleep(delay)
 
         if "text" in info:
             value = info["text"]
-            self.inst.write(f':MESSAGE:SHOW "{value}"')
+            self.sendData(f':MESSAGE:SHOW "{value}"')
             time.sleep(delay)
                 
+    def sendData(self, txt):
+        if self.debug:
+            self.inst.write('*CLS')
+            self.inst.write(txt)
+            err = self.inst.query('EVMSG?').strip()
+            print(f"{txt}  =>  {err}")
+        else:
+            self.inst.write(txt)
+        
     def map_measure(self, meas):
         if meas in MEAS_MAP_TEKTRONIX:
             return MEAS_MAP_TEKTRONIX[meas]

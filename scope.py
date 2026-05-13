@@ -10,7 +10,7 @@ from keysight import KeysightScope
 
 class Scope:
 
-    def __init__(self, resource=None):
+    def __init__(self, resource=None, debug = False):
         # -------------------------------------------------
         # detect resource automatically
         # -------------------------------------------------
@@ -24,7 +24,6 @@ class Scope:
             else:
                 print(f"resource = {resource}")
 
-        
 
         # -------------------------------------------------
         # connect VISA
@@ -52,10 +51,10 @@ class Scope:
         # -------------------------------------------------
 
         if "TEKTRONIX" in idn.upper():
-            self.driver = TektronixScope(self.inst)
+            self.driver = TektronixScope(self.inst,debug)
 
         elif "KEYSIGHT" in idn.upper() or "AGILENT" in idn.upper():
-            self.driver = KeysightScope(self.inst)
+            self.driver = KeysightScope(self.inst,debug)
 
         else:
             raise Exception("Unsupported instrument")
@@ -131,8 +130,8 @@ class Scope:
     # ---------------------------------------------------------
 
     @staticmethod
-    def main(file, resource, channel="CH1", screenshot=True,info=False):
-        scope = Scope(resource)
+    def main(file, resource, channel="CH1", screenshot=True,info=False, debug = False):
+        scope = Scope(resource,debug)
 
         if isinstance(channel, str):
             channel = [channel]
