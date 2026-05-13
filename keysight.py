@@ -191,7 +191,7 @@ class KeysightScope:
                 self.inst.write(f':CURSor:Y2 3.3')
                 self.inst.write(f':DISPlay:GRID FULL')
             if 'meas' in info and len(info['meas']) > 0:
-                self.inst.write(":MEASure:CLEar")
+                if len(info['meas']) > 0: self.inst.write(":MEASure:CLEar")
                 for v in info['meas']:
                     v = self.map_measure(v)
                     if v == 'RISetime' or v == 'FALLtime':

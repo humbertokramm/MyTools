@@ -802,7 +802,7 @@ class csvscope:
 			text=id+' ('+getValue(x,s,'x')+' , '+getValue(y,s,'y')+')'
 			style = '->'
 			dir = 'NE'
-			s['info'].append([id,y,text])
+			s['info']['findY']=[id,y,text]
 			s['info'][id]=[y,text]
 			self.yDf['draw'][indexLabel].append([cord,text,style,dir,name])
 			return
