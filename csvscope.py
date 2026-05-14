@@ -129,7 +129,7 @@ class CsvScope:
 	def __str__(self):
 		return self.title
 
-	def filter_signal(self,name='ch1',fc=1e3,ordem=2,overwrite=True,corte=0.2):
+	def filter_signal(self,name='ch1',fc=1e3,order=2,overwrite=True,cutoff=0.2):
 		"""
 		Aplica um filtro passa-baixas Butterworth a uma série de dados.
 		
@@ -153,21 +153,19 @@ class CsvScope:
 		try:
 			i= self.get_order().index(name)
 		except:
-			print('não foi encontrada uma lista com o nome '+str(name))
+			print('Series not found: '+str(name))
 			return
 		T=self.reads[i]['x'].iat[1]-self.reads[i]['x'].iat[0]
 		fs = 1/(T*self.reads[i]['engNoteX'])
-		# filtro passa-baixas Butterworth
-		b, a = signal.butter(ordem, fc/(fs/2), btype='low')
-		# Aplicar o filtro ao sinal
-		sinal_filtrado = signal.lfilter(b, a, self.reads[i]['y'])
-		sinal_filtrado=pd.DataFrame(sinal_filtrado)
+		b, a = signal.butter(order, fc/(fs/2), btype='low')
+		filtered = signal.lfilter(b, a, self.reads[i]['y'])
+		filtered = pd.DataFrame(filtered)
 		if overwrite:
-			corte = int(len(sinal_filtrado)*(corte/100))
-			self.reads[i]['data'] += f'[Filtered with order {ordem} Butterworth @ {format_eng_str(fc,2)}Hz]'
-			self.reads[i]['y'] = sinal_filtrado[corte:]
-			self.reads[i]['x'] = self.reads[i]['x'][corte:]
-		return self.reads[i]['x']*self.reads[i]['engNoteX'],sinal_filtrado*self.reads[i]['engNoteY']
+			cut = int(len(filtered)*(cutoff/100))
+			self.reads[i]['data'] += f'[Filtered with order {order} Butterworth @ {format_eng_str(fc,2)}Hz]'
+			self.reads[i]['y'] = filtered[cut:]
+			self.reads[i]['x'] = self.reads[i]['x'][cut:]
+		return self.reads[i]['x']*self.reads[i]['engNoteX'], filtered*self.reads[i]['engNoteY']
 
 	def _apply_filter(self,df,filter_params=[1e3,4]):
 		fc = filter_params[0]
@@ -713,7 +711,7 @@ class CsvScope:
 				rms = np.sqrt((y**2).mean())
 				meio = int(len(y)/2)
 				cord=[[x[meio],y[meio]],[None,None]]
-				text=d+ ': '+format_value(rms,s,'y',casas=4)
+				text=d+ ': '+format_value(rms,s,'y',decimals=4)
 				style = '->'
 				dir = 'NE'
 				s['info'][d]=[rms,text]
