@@ -140,7 +140,7 @@ class TektronixScope:
     def capture_screen(self):
 
         self.sendData("HARDCopy:FORMat PNG")
-        self.sendData("HARDCopy STARt")
+        self.inst.write("HARDCopy STARt")  # produz dados — não pode usar sendData em modo debug
 
         data = self.inst.read_raw()
 
@@ -177,12 +177,34 @@ class TektronixScope:
             time.sleep(delay)
 
         if 'cursor' in info:
+            cursor = {k.lower(): v for k, v in info['cursor'].items()} if isinstance(info['cursor'], dict) else {}
+            has_y = 'y1' in cursor or 'y2' in cursor
+            has_x = 'x1' in cursor or 'x2' in cursor
+            show  = cursor.get('show', 'y')   # 'y' = HBARS, 'x' = VBARS (padrão: y)
             self.sendData(":CURSOR:STATE ON")
-            time.sleep(delay)
-            self.sendData(":CURSOR:MODE MANUAL")
-            time.sleep(delay)
-            self.sendData(f":CURSOR:SOUR CH{ch}")
-            time.sleep(delay)
+            if has_y and not has_x:
+                self.sendData(":CURSOR:FUNCTION HBARS")
+                self.sendData(":CURSOR:HBARS:UNITS BASE")
+                self.sendData(f":CURSOR:HBARS:SOURCE1 CH{ch}")
+                if 'y1' in cursor: self.sendData(f":CURSOR:HBARS:POSITION1 {cursor['y1']}")
+                if 'y2' in cursor: self.sendData(f":CURSOR:HBARS:POSITION2 {cursor['y2']}")
+            elif has_x and not has_y:
+                self.sendData(":CURSOR:FUNCTION VBARS")
+                self.sendData(":CURSOR:VBARS:UNITS SECONDS")
+                self.sendData(f":CURSOR:VBARS:SOURCE1 CH{ch}")
+                if 'x1' in cursor: self.sendData(f":CURSOR:VBARS:POSITION1 {cursor['x1']}")
+                if 'x2' in cursor: self.sendData(f":CURSOR:VBARS:POSITION2 {cursor['x2']}")
+            elif has_x and has_y:
+                # Modo SCREEN: HBARS = Y, VBARS = X (setar VBARS por último —
+                # setar HBARS em SCREEN recalcula VBARS para cruzamento da onda)
+                self.sendData(":CURSOR:FUNCTION SCREEN")
+                self.sendData(":CURSOR:HBARS:UNITS BASE")
+                self.sendData(f":CURSOR:HBARS:SOURCE1 CH{ch}")
+                if 'y1' in cursor: self.sendData(f":CURSOR:HBARS:POSITION1 {cursor['y1']}")
+                if 'y2' in cursor: self.sendData(f":CURSOR:HBARS:POSITION2 {cursor['y2']}")
+                self.sendData(":CURSOR:VBARS:UNITS SECONDS")
+                if 'x1' in cursor: self.sendData(f":CURSOR:VBARS:POSITION1 {cursor['x1']}")
+                if 'x2' in cursor: self.sendData(f":CURSOR:VBARS:POSITION2 {cursor['x2']}")
 
         if 'meas' in info:
             #for i in range(1, 5):

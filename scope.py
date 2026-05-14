@@ -10,10 +10,11 @@ from keysight import KeysightScope
 
 class Scope:
 
-    def __init__(self, resource=None, debug = False):
+    def __init__(self, resource=None, debug=False, overwrite=False):
         # -------------------------------------------------
         # detect resource automatically
         # -------------------------------------------------
+        self.overwrite = overwrite
         if resource is None:
 
             resource = DS.select_visa_resource()
@@ -64,9 +65,11 @@ class Scope:
     # ---------------------------------------------------------
     def checkExistentFile(self,caminho_arquivo):
         if os.path.exists(caminho_arquivo):
+            if self.overwrite:
+                return False   # Sobrescreve direto sem perguntar
             nome = os.path.basename(caminho_arquivo)
             resposta = input(f'O arquivo "{nome}" já existe. \n\tDeseja sobrescrever? (s/N): ').strip().lower()
-            
+
             if resposta == 's':
                 return False   # Pode sobrescrever
             else:
@@ -130,8 +133,8 @@ class Scope:
     # ---------------------------------------------------------
 
     @staticmethod
-    def main(file, resource, channel="CH1", screenshot=True,info=False, debug = False):
-        scope = Scope(resource,debug)
+    def main(file, resource, channel="CH1", screenshot=True, info=False, debug=False, overwrite=False):
+        scope = Scope(resource, debug, overwrite)
 
         if isinstance(channel, str):
             channel = [channel]
