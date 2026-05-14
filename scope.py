@@ -6,17 +6,31 @@ import dirHandle as dh
 from time import sleep
 
 from tektronix import TektronixScope
+from tektronix_net import TektronixNetScope
 from keysight import KeysightScope
 
 class Scope:
 
     def __init__(self, resource=None, debug=False, overwrite=False):
-        # -------------------------------------------------
-        # detect resource automatically
-        # -------------------------------------------------
         self.overwrite = overwrite
-        if resource is None:
+        self.inst = None
+        self.rm = None
 
+        # -------------------------------------------------
+        # HTTP connection (TDS3052B or similar)
+        # resource format: "HTTP::192.168.1.100"
+        # -------------------------------------------------
+        if resource is not None and resource.upper().startswith("HTTP::"):
+            ip = resource.split("::", 1)[1]
+            self.resource = resource
+            self.driver = TektronixNetScope(ip, debug)
+            print(f"HTTP connection established: {ip}")
+            return
+
+        # -------------------------------------------------
+        # detect resource automatically (VISA)
+        # -------------------------------------------------
+        if resource is None:
             resource = DS.select_visa_resource()
 
             if resource is None or "USB" not in resource:
@@ -25,22 +39,21 @@ class Scope:
             else:
                 print(f"resource = {resource}")
 
-
         # -------------------------------------------------
         # connect VISA
         # -------------------------------------------------
-        
-        for tentativa in range(3):
+        for attempt in range(3):
             try:
                 self.resource = resource
                 self.rm = pyvisa.ResourceManager()
                 self.inst = self.rm.open_resource(resource)
                 break
-            except:
-                dh.print_colored(f"Erro na tentativa {tentativa+1} ao conectar em:",'RED')
+            except Exception:
+                dh.print_colored(f"Connection attempt {attempt + 1} failed:", 'RED')
                 print(f'RESOURCE = "{resource}"')
                 sleep(2)
-                if tentativa > 1: exit()
+                if attempt > 1:
+                    exit()
 
         self.inst.timeout = 10000
 
@@ -52,18 +65,18 @@ class Scope:
         # -------------------------------------------------
 
         if "TEKTRONIX" in idn.upper():
-            self.driver = TektronixScope(self.inst,debug)
+            self.driver = TektronixScope(self.inst, debug)
 
         elif "KEYSIGHT" in idn.upper() or "AGILENT" in idn.upper():
-            self.driver = KeysightScope(self.inst,debug)
+            self.driver = KeysightScope(self.inst, debug)
 
         else:
             raise Exception("Unsupported instrument")
             
     # ---------------------------------------------------------
-    # Verifica se já existe o arquivo
+    # file overwrite guard
     # ---------------------------------------------------------
-    def _file_exists(self,caminho_arquivo):
+    def _file_exists(self, caminho_arquivo):
         if os.path.exists(caminho_arquivo):
             if self.overwrite:
                 return False   # Sobrescreve direto sem perguntar
@@ -115,6 +128,10 @@ class Scope:
             return
         data = self.driver.capture_screen()
 
+        if data is None:
+            dh.print_colored("Screenshot not available for this instrument.", 'YELLOW')
+            return
+
         with open(filename, "wb") as f:
             f.write(data)
 
@@ -124,9 +141,10 @@ class Scope:
     # connection
     # ---------------------------------------------------------
     def close(self):
-
-        self.inst.close()
-        self.rm.close()
+        if self.inst is not None:
+            self.inst.close()
+        if self.rm is not None:
+            self.rm.close()
     
     # ---------------------------------------------------------
     # HIGH LEVEL CAPTURE
