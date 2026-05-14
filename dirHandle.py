@@ -1,76 +1,38 @@
 """
 **File: dirHandle.py**
 
-**Descrição**
-    Módulo utilitário para manipulação de diretórios, arquivos e interface com usuário.
-    Fornece funções coloridas, validação de nomes e seleção de arquivos.
+Utility module for directory/file handling and user interaction.
+Provides colored terminal output, filename sanitization and file selection.
 
-**Funções Principais**
+**Main Functions**
 
-``ajustar_nome_arquivo(nome)``
-    Ajusta string para nome de arquivo válido no Windows.
-    
-    :param nome: String a ajustar
-    :type nome: str
-    :return: String ajustada (máximo 255 caracteres)
-    :rtype: str
-    
-    Substituições realizadas:
-    - '*' e ':' → '.'
-    - '<' e '>' → '-'
-    - Caracteres inválidos → '_'
+``sanitize_filename(name)``
+    Adjust a string to be a valid Windows filename (max 255 chars).
 
-``Aviso(msg, cor='RESET')``
-    Imprime mensagem colorida no terminal usando códigos ANSI.
-    
-    :param msg: Mensagem a exibir
-    :type msg: str
-    :param cor: Cor desejada (VERMELHO, VERDE, AMARELO, AZUL, RESET)
-    :type cor: str
+``print_colored(msg, color='RESET')``
+    Print a colored message to the terminal using ANSI codes.
 
-``confirmarErro(assertMSG, abortMSG='')``
-    Solicita confirmação do usuário para continuar ou abortar operação.
-    
-    :param assertMSG: Mensagem que usuário deve digitar para continuar
-    :type assertMSG: str
-    :param abortMSG: Mensagem para abortar (opcional)
-    :type abortMSG: str
-    :return: "continue" ou "abort"
-    :rtype: str
+``assert_or_abort(confirm_msg, abort_msg='')``
+    Prompt the user to confirm or abort an operation.
 
-``contem_todas_substrings(string, lista_substrings)``
-    Verifica se string contém todas as substrings da lista.
-    
-    :param string: String a verificar
-    :type string: str
-    :param lista_substrings: Lista de substrings
-    :type lista_substrings: list
-    :return: True se contém todas
-    :rtype: bool
+``contains_all(string, substrings)``
+    Return True if string contains every item in substrings.
 
-``selecioneArquivo(rules, noRules=[], msg='...', dir="local")``
-    Permite ao usuário selecionar arquivo de lista filtrada.
-    
-    :param rules: Substrings que arquivo DEVE conter
-    :type rules: list
-    :param noRules: Substrings que arquivo NÃO deve conter
-    :type noRules: list
-    :param msg: Mensagem de prompt
-    :type msg: str
-    :param dir: Diretório de busca
-    :type dir: str
-    :return: Caminho do arquivo selecionado
-    :rtype: str
+``lacks_any(string, substrings)``
+    Return True if string contains none of the items in substrings.
 
-**Cores Disponíveis**
+``select_file(rules, exclude=[], msg='...', directory='local')``
+    Let the user pick a file from a filtered list.
 
-- VERMELHO: '[91m'
-- VERDE: '[92m'
-- AMARELO: '[93m'
-- AZUL: '[94m'
-- RESET: Reseta cores
+``select_from_list(file_list=[], msg='...', path='')``
+    Let the user pick from a list ordered newest-first.
 
-See: docs/guia_documentacao.rst
+``select_option(options=[], msg='...', path='')``
+    Let the user pick from an alphabetically sorted list.
+
+**Available colors**
+
+- RED, GREEN, YELLOW, BLUE, RESET
 """
 
 import os
@@ -78,217 +40,261 @@ from datetime import datetime
 import re
 from pprint import pprint
 
-# Códigos ANSI para cores
-cores ={
-	'VERMELHO':'\033[91m',
-	'VERDE':'\033[92m',
-	'AMARELO':'\033[93m',
-	'AZUL':'\033[94m',
-	'RESET':'\033[0m',  # Reseta a cor
-	}
+# ANSI color codes
+COLORS = {
+    'RED':    '\033[91m',
+    'GREEN':  '\033[92m',
+    'YELLOW': '\033[93m',
+    'BLUE':   '\033[94m',
+    'RESET':  '\033[0m',
+}
 
 
+def sanitize_filename(name: str) -> str:
+    """Adjust a string to be a valid Windows filename.
 
-def ajustar_nome_arquivo(nome: str) -> str:
-	"""
-	Ajusta uma string para garantir que seja válida como nome de arquivo no Windows.
-	Substitui caracteres específicos por alternativas compatíveis.
+    Args:
+        name (str): The string to sanitize.
 
-	Args:
-		nome (str): A string que será ajustada.
+    Returns:
+        str: Sanitized string, limited to 255 characters.
 
-	Returns:
-		str: A string ajustada, limitada a 255 caracteres.
+    Note:
+        Substitution rules:
 
-	Note:
-		Regras de substituição:
-		- '*' e ':' são substituídos por '.'
-		- '<' e '>' são substituídos por '-'
-		- Outros caracteres inválidos (/ " \\ | ?) são substituídos por '_'
-		- Remove espaços no início e fim.
-	"""
-	# Substituições específicas
-	nome = nome.replace('*', '.').replace(':', '.')
-	nome = nome.replace('<', '-').replace('>', '-')
-	
-	# Regex para os demais caracteres inválidos
-	caracteres_invalidos = r'[/"\\|?]'
-	nome = re.sub(caracteres_invalidos, '_', nome)
-	
-	# Remove espaços no início e no fim e limita o tamanho
-	return nome.strip()[:255]
+        - ``*`` and ``:`` → ``.``
+        - ``<`` and ``>`` → ``-``
+        - ``/ " \\ | ?`` → ``_``
+        - Leading/trailing spaces removed.
+    """
+    name = name.replace('*', '.').replace(':', '.')
+    name = name.replace('<', '-').replace('>', '-')
+    name = re.sub(r'[/"\\|?]', '_', name)
+    return name.strip()[:255]
 
-def Aviso(msg,cor='RESET'):
-	"""
-	Imprime mensagem colorida no terminal.
-	
-	Args:
-		msg (str): Mensagem a ser exibida.
-		cor (str, optional): Cor da mensagem: 'VERMELHO', 'VERDE', 'AMARELO', 'AZUL', 'RESET'.
-			Padrão é 'RESET'.
-	
-	Returns:
-		None: Imprime mensagem formatada com código ANSI de cor.
-	"""
-	print(f"{cores[cor.upper()]}{msg}{cores['RESET']}")
 
-def data_modificacao_arquivo(caminho_arquivo,path=''):
-	timestamp_modificacao = os.path.getmtime(caminho_arquivo)
-	data_modificacao = datetime.fromtimestamp(timestamp_modificacao)
-	return data_modificacao.replace(microsecond=0)
-	
-def confirmarErro(assertMSG,abortMSG=''):
-	"""
-	Solicita confirmação do usuário para continuar ou abortar operação.
-	
-	Args:
-		assertMSG (str): Mensagem que o usuário deve digitar para continuar.
-		abortMSG (str, optional): Mensagem que o usuário deve digitar para abortar.
-			Se '', não permite abortar. Padrão é ''.
-	
-	Returns:
-		str: "continue" se usuário confirmou, "abort" se abortou.
-	
-	Note:
-		- Loop infinito até receber uma resposta válida.
-		- Comparação case-insensitive.
-	"""
-	while True:
-		print(f'\n\tDigite "{assertMSG}" para continuar\n')
-		x = input().lower()
-		if x == assertMSG.lower(): return "continue"
-		if x == abortMSG.lower(): return "abort"
+def print_colored(msg, color='RESET'):
+    """Print a colored message to the terminal.
 
-def contem_todas_substrings(string, lista_substrings):
-	return all(substring in string for substring in lista_substrings)
-	
-def nao_contem_todas_substrings(string, lista_substrings):
-	if len(lista_substrings) == 0: return True
-	return all(substring not in string for substring in lista_substrings)
-	
-def selecioneArquivo(rules,noRules=[],msg='Selecione um arquivo a ser analisado',dir="local"):
-	"""
-	Permite ao usuário selecionar um arquivo de uma lista filtrada.
-	
-	Args:
-		rules (list): Lista de substrings que o arquivo DEVE conter.
-		noRules (list, optional): Lista de substrings que o arquivo NÃO deve conter.
-			Padrão é [].
-		msg (str, optional): Mensagem exibida ao usuário. Padrão é 'Selecione um arquivo a ser analisado'.
-		dir (str, optional): Diretório de busca: "local" (diretório atual) ou "parent" (diretório pai).
-			Padrão é "local".
-	
-	Returns:
-		str or None: Caminho completo do arquivo selecionado, ou None se nenhum arquivo encontrado
-			ou usuário cancelar.
-	
-	Note:
-		- Lista arquivos ordenados do mais recente para o mais antigo.
-		- Se apenas um arquivo encontrado, seleciona automaticamente.
-		- Exibe data de modificação de cada arquivo.
-	"""
-	path = ''
-	if dir == "local":
-		files = os.listdir()
-	elif dir == 'parent':
-		path = os.path.dirname(os.getcwd())+'\\'
-		files = os.listdir(path)
+    Args:
+        msg (str): Message to display.
+        color (str, optional): Color name: ``'RED'``, ``'GREEN'``,
+            ``'YELLOW'``, ``'BLUE'``, ``'RESET'``. Defaults to ``'RESET'``.
+    """
+    print(f"{COLORS[color.upper()]}{msg}{COLORS['RESET']}")
 
-	fileList = []
-	print("\n")
-	for f in files:
-		if contem_todas_substrings(f,rules):
-			if nao_contem_todas_substrings(f,noRules):
-				fileList.append(f)
-	return selecioneNaLista(fileList,msg,path)
 
-def selecioneNaLista(fileList=[],msg='Selecione uma opção',path=''):
+def file_modified_date(file_path, path=''):
+    """Return the last-modified datetime of a file (microseconds truncated).
 
-	if len(fileList) == 0:
-		Aviso("\tNenhum Arquivo encontrado\n",'vermelho')
-		if confirmarErro("Y") == 'abort': exit()
-		else: return None
-	
-	#Verifica o tamanho do maior nome dos arquivos
-	maxName = max(len(file) for file in fileList if file is not None) if fileList else 0
-	
-	if len(fileList) == 1:
-		namefile = fileList[0]
-		if "\\" in namefile:
-			i = namefile.rfind("\\")
-			namefile = namefile[:i + 1] + "\n\t\t" + namefile[i + 1:]
-		print(f"\tSelecionado o arquivo {namefile} | {data_modificacao_arquivo(path+fileList[0])}\n")
-		return path+fileList[0]
-	
+    Args:
+        file_path (str): Path to the file.
+        path (str, optional): Optional prefix to prepend. Defaults to ``''``.
 
-	# Primeiro ordenamos a lista de arquivos do mais novo para o mais antigo
-	fileList = sorted(
-		[f for f in fileList if f is not None],  # Filtra os None
-		key=lambda x: os.path.getmtime(path+x),       # Ordena pelo timestamp de modificação
-		reverse=True                             # Do mais novo para o mais antigo
-	)
-	
-	fileList.append(None)
+    Returns:
+        datetime: Last-modified datetime without microseconds.
+    """
+    timestamp = os.path.getmtime(file_path)
+    return datetime.fromtimestamp(timestamp).replace(microsecond=0)
 
-	while True:
-		print(f"\n\t{msg}\n")
-		index = 0
-		for file in fileList:
-			index += 1
-			if file == None:
-				print(f"\t({index}) - Sair")
-			else:
-				namefile = file
-				if "\\" in namefile:
-					i = namefile.rfind("\\")
-					namefile = namefile[:i + 1] + "\n\t\t" + namefile[i + 1:]
-				print(f"\t({index}) - {namefile} {(maxName - len(file))*' '} | {data_modificacao_arquivo(path+file)}\n")
-		try: index = int(input())-1
-		except: print("Digite um número")
-		if index<0 or index>=len(fileList): print("\n\tOpção inválida\n")
-		else:
-			if fileList[index] == None: exit()
-			return path+fileList[index]
 
-def selecioneOpcaoNaLista(fileList=[],msg='Selecione uma opção',path=''):
+def assert_or_abort(confirm_msg, abort_msg=''):
+    """Prompt the user to confirm or abort an operation.
 
-	if len(fileList) == 0:
-		Aviso("\tNenhum Arquivo encontrado\n",'vermelho')
-		if confirmarErro("Y") == 'abort': exit()
-		else: return None
-	
-	#Verifica o tamanho do maior nome dos arquivos
-	maxName = max(len(file) for file in fileList if file is not None) if fileList else 0
-	
-	if len(fileList) == 1:
-		namefile = fileList[0]
-		if "\\" in namefile:
-			i = namefile.rfind("\\")
-			namefile = namefile[:i + 1] + "\n\t\t" + namefile[i + 1:]
-		print(f"\tSelecionado o arquivo {namefile}\n")
-		return path+fileList[0]
-	
+    Loops indefinitely until a valid response is received.
 
-	# Primeiro ordenamos a lista de arquivos do mais novo para o mais antigo
-	fileList = sorted(fileList)
-	fileList.append(None)
+    Args:
+        confirm_msg (str): The string the user must type to continue.
+        abort_msg (str, optional): The string the user must type to abort.
+            If empty, aborting is not allowed. Defaults to ``''``.
 
-	while True:
-		print(f"\n\t{msg}\n")
-		index = 0
-		for file in fileList:
-			index += 1
-			if file == None:
-				print(f"\t({index}) - Sair")
-			else:
-				namefile = file
-				if "\\" in namefile:
-					i = namefile.rfind("\\")
-					namefile = namefile[:i + 1] + "\n\t\t" + namefile[i + 1:]
-				print(f"\t({index}) - {namefile} {(maxName - len(file))*' '}\n")
-		try: index = int(input())-1
-		except: print("Digite um número")
-		if index<0 or index>=len(fileList): print("\n\tOpção inválida\n")
-		else:
-			if fileList[index] == None: exit()
-			return path+fileList[index]
+    Returns:
+        str: ``'continue'`` if confirmed, ``'abort'`` if aborted.
+    """
+    while True:
+        print(f'\n\tType "{confirm_msg}" to continue\n')
+        x = input().lower()
+        if x == confirm_msg.lower():
+            return "continue"
+        if x == abort_msg.lower():
+            return "abort"
+
+
+def contains_all(string, substrings):
+    """Return True if *string* contains every item in *substrings*.
+
+    Args:
+        string (str): String to check.
+        substrings (list): List of substrings that must all be present.
+
+    Returns:
+        bool: True if all substrings are found.
+    """
+    return all(s in string for s in substrings)
+
+
+def lacks_any(string, substrings):
+    """Return True if *string* contains none of the items in *substrings*.
+
+    Args:
+        string (str): String to check.
+        substrings (list): List of substrings that must all be absent.
+
+    Returns:
+        bool: True if no substring is found (or list is empty).
+    """
+    if len(substrings) == 0:
+        return True
+    return all(s not in string for s in substrings)
+
+
+def select_file(rules, exclude=[], msg='Select a file to analyse', directory='local'):
+    """Let the user pick a file from a filtered directory listing.
+
+    Args:
+        rules (list): Substrings the filename MUST contain.
+        exclude (list, optional): Substrings the filename must NOT contain.
+            Defaults to ``[]``.
+        msg (str, optional): Prompt shown to the user.
+            Defaults to ``'Select a file to analyse'``.
+        directory (str, optional): Search location: ``'local'`` (cwd) or
+            ``'parent'`` (parent directory). Defaults to ``'local'``.
+
+    Returns:
+        str or None: Full path of the selected file, or None if cancelled.
+
+    Note:
+        Files are listed newest-first. A single match is auto-selected.
+    """
+    path = ''
+    if directory == 'local':
+        files = os.listdir()
+    elif directory == 'parent':
+        path = os.path.dirname(os.getcwd()) + '\\'
+        files = os.listdir(path)
+
+    file_list = []
+    print("\n")
+    for f in files:
+        if contains_all(f, rules) and lacks_any(f, exclude):
+            file_list.append(f)
+
+    return select_from_list(file_list, msg, path)
+
+
+def select_from_list(file_list=[], msg='Select an option', path=''):
+    """Let the user pick from a list ordered newest-first.
+
+    Args:
+        file_list (list): List of filenames to choose from.
+        msg (str, optional): Prompt shown to the user. Defaults to
+            ``'Select an option'``.
+        path (str, optional): Directory prefix prepended to the chosen
+            filename. Defaults to ``''``.
+
+    Returns:
+        str or None: ``path + chosen_filename``, or None if no files found.
+    """
+    if len(file_list) == 0:
+        print_colored("\tNo file found\n", 'RED')
+        if assert_or_abort("Y") == 'abort':
+            exit()
+        else:
+            return None
+
+    max_name = max(len(f) for f in file_list if f is not None) if file_list else 0
+
+    if len(file_list) == 1:
+        name = file_list[0]
+        if "\\" in name:
+            i = name.rfind("\\")
+            name = name[:i + 1] + "\n\t\t" + name[i + 1:]
+        print(f"\tSelected: {name} | {file_modified_date(path + file_list[0])}\n")
+        return path + file_list[0]
+
+    file_list = sorted(
+        [f for f in file_list if f is not None],
+        key=lambda x: os.path.getmtime(path + x),
+        reverse=True
+    )
+    file_list.append(None)
+
+    while True:
+        print(f"\n\t{msg}\n")
+        for idx, f in enumerate(file_list, start=1):
+            if f is None:
+                print(f"\t({idx}) - Exit")
+            else:
+                name = f
+                if "\\" in name:
+                    i = name.rfind("\\")
+                    name = name[:i + 1] + "\n\t\t" + name[i + 1:]
+                print(f"\t({idx}) - {name} {(max_name - len(f)) * ' '} | {file_modified_date(path + f)}\n")
+        try:
+            choice = int(input()) - 1
+        except Exception:
+            print("Enter a number")
+            continue
+        if choice < 0 or choice >= len(file_list):
+            print("\n\tInvalid option\n")
+        else:
+            if file_list[choice] is None:
+                exit()
+            return path + file_list[choice]
+
+
+def select_option(options=[], msg='Select an option', path=''):
+    """Let the user pick from an alphabetically sorted list.
+
+    Args:
+        options (list): List of option strings.
+        msg (str, optional): Prompt shown to the user. Defaults to
+            ``'Select an option'``.
+        path (str, optional): Prefix prepended to the chosen option.
+            Defaults to ``''``.
+
+    Returns:
+        str or None: ``path + chosen_option``, or None if list is empty.
+    """
+    if len(options) == 0:
+        print_colored("\tNo option found\n", 'RED')
+        if assert_or_abort("Y") == 'abort':
+            exit()
+        else:
+            return None
+
+    max_name = max(len(o) for o in options if o is not None) if options else 0
+
+    if len(options) == 1:
+        name = options[0]
+        if "\\" in name:
+            i = name.rfind("\\")
+            name = name[:i + 1] + "\n\t\t" + name[i + 1:]
+        print(f"\tSelected: {name}\n")
+        return path + options[0]
+
+    options = sorted(options)
+    options.append(None)
+
+    while True:
+        print(f"\n\t{msg}\n")
+        for idx, opt in enumerate(options, start=1):
+            if opt is None:
+                print(f"\t({idx}) - Exit")
+            else:
+                name = opt
+                if "\\" in name:
+                    i = name.rfind("\\")
+                    name = name[:i + 1] + "\n\t\t" + name[i + 1:]
+                print(f"\t({idx}) - {name} {(max_name - len(opt)) * ' '}\n")
+        try:
+            choice = int(input()) - 1
+        except Exception:
+            print("Enter a number")
+            continue
+        if choice < 0 or choice >= len(options):
+            print("\n\tInvalid option\n")
+        else:
+            if options[choice] is None:
+                exit()
+            return path + options[choice]

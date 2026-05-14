@@ -1,149 +1,180 @@
 import numpy as np
-from pprint import pprint
 from datetime import datetime
 
-EngNotation ={
-    'Y':	1e24 ,	'Z':	1e21 ,	'E':	1e18 ,	'P':	1e15 ,	'T':	1e12 ,	'G':	1e9  ,
-    'M':	1e6  ,	'k':	1e3  ,	'h':	1e2  ,	'da':	1e1  ,	'' :	1e0  ,	'd':	1e-1 ,
-    'c':	1e-2 ,	'm':	1e-3 ,	'u':	1e-6 ,	'µ':	1e-6 ,	'n':	1e-9 ,	'p':	1e-12,
-    'f':	1e-15,	'a':	1e-18,	'z':	1e-21,	'y':	1e-24,
-    #extras
-    #'cm^4':	1e-8,	'cm^3':	1e-6,	'cm^2':	1e-4,	'cm³':	1e-6,	'cm²':	1e-4,	'mm^4':	1e-12,
-    #'mm^3':	1e-9,	'mm^2':	1e-6,	'mm³':	1e-9,	'mm²':	1e-6,	'%':  	1e-2
+ENG_NOTATION = {
+    'Y':  1e24,  'Z':  1e21,  'E':  1e18,  'P':  1e15,  'T':  1e12,  'G':  1e9,
+    'M':  1e6,   'k':  1e3,   'h':  1e2,   'da': 1e1,   '':   1e0,   'd':  1e-1,
+    'c':  1e-2,  'm':  1e-3,  'u':  1e-6,  'µ':  1e-6,  'n':  1e-9,  'p':  1e-12,
+    'f':  1e-15, 'a':  1e-18, 'z':  1e-21, 'y':  1e-24,
 }
-Symbol = ['V','W','A','Ω','s','Hz']
 
-def getEng(nota,s=False):
-    """
-    Extrai e converte notação de engenharia de uma string de label.
-    
-    Args:
-        nota (str): String contendo notação de engenharia entre colchetes, ex: "Time[ms]".
-        s (bool or str, optional): Modo de retorno:
-            - False: Retorna o fator numérico (ex: 1e-3 para 'm').
-            - True: Retorna string com notação e símbolo (ex: "mV").
-            - 'symbol': Retorna apenas o símbolo (ex: "V").
-            Padrão é False.
-    
-    Returns:
-        float or str: Dependendo do parâmetro 's':
-            - Se s=False: fator numérico da notação de engenharia.
-            - Se s=True: string com notação e símbolo.
-            - Se s='symbol': apenas o símbolo da unidade.
-            - Se não encontrar notação: 1 (se s=False) ou '' (se s=True).
-    """
-    i = nota.find('[')+1
-    o = nota.find(']')
-    if i>o:
-        if s: return ''
-        return 1
-    nota = nota[i:o]
-    qt = ''
-    for q in Symbol:
-        if nota.find(q)>-1:
-            qt = q
-        nota = nota.replace(q,'')
-    if s == 'symbol': return qt
-    if s == True: return nota+qt
-    return EngNotation[nota]
+SYMBOLS = ['V', 'W', 'A', 'Ω', 's', 'Hz']
 
-def getEngSTR(number,casas = 2, string = True):
-    """
-    Converte um número para notação de engenharia em string.
-    
+
+def format_eng(label, suffix=False):
+    """Extract and convert engineering notation from a bracketed label string.
+
     Args:
-        number (float or str): Número a ser convertido. Se for string, retorna com espaço.
-        casas (int, optional): Número de casas decimais. Padrão é 2.
-    
+        label (str): String containing engineering notation in brackets,
+            e.g. ``'Time[ms]'``.
+        suffix (bool or str, optional): Return mode:
+
+            - ``False`` – return the numeric factor (e.g. ``1e-3`` for ``'m'``).
+            - ``True``  – return notation + symbol string (e.g. ``'mV'``).
+            - ``'symbol'`` – return only the unit symbol (e.g. ``'V'``).
+
+            Defaults to ``False``.
+
     Returns:
-        str: Número formatado em notação de engenharia, ex: "1.23 k", "456.78 m".
-            Se number for 0, retorna "0 ".
-            Se number for string, retorna a string com espaço no final.
+        float or str: Depends on *suffix*:
+
+            - ``False``: numeric scale factor.
+            - ``True``: notation+symbol string.
+            - ``'symbol'``: unit symbol string.
+            - If no notation found: ``1`` (suffix=False) or ``''`` (suffix=True).
     """
-    if number == 0: return '0 '
-    if type(number) == type(''): return number + ' '
+    i = label.find('[') + 1
+    o = label.find(']')
+    if i > o:
+        return '' if suffix else 1
+    label = label[i:o]
+    symbol = ''
+    for q in SYMBOLS:
+        if label.find(q) > -1:
+            symbol = q
+        label = label.replace(q, '')
+    if suffix == 'symbol':
+        return symbol
+    if suffix is True:
+        return label + symbol
+    return ENG_NOTATION[label]
+
+
+def format_eng_str(number, decimals=2, string=True):
+    """Convert a number to an engineering-notation string.
+
+    Args:
+        number (float or str): Number to convert.
+            If already a string, it is returned with a trailing space.
+        decimals (int, optional): Decimal places. Defaults to ``2``.
+        string (bool, optional): If ``True`` return a formatted string;
+            if ``False`` return a dict with ``value``, ``decimals``,
+            ``unit`` and ``factor`` keys. Defaults to ``True``.
+
+    Returns:
+        str or dict: Formatted string (e.g. ``'1.23 k'``) or breakdown dict.
+            Returns ``'0 '`` when *number* is zero.
+    """
+    if number == 0:
+        return '0 '
+    if isinstance(number, str):
+        return number + ' '
     exponent = int(np.floor(np.log10(abs(number))))
     exponent = (exponent // 3) * 3
     unit = {
-        -30: 'q',-27: 'r',-24: 'y',-21: 'z',-18: 'a',-15: 'f',-12: 'p',-9: 'n',-6: 'µ',-3: 'm',
-        0: '', 3: 'k', 6: 'M', 9: 'G', 12: 'T', 15: 'P', 18: 'E', 21: 'Z', 24: 'Y', 27: 'R', 30: 'Q'
+        -30: 'q', -27: 'r', -24: 'y', -21: 'z', -18: 'a', -15: 'f',
+        -12: 'p',  -9: 'n',  -6: 'µ',  -3: 'm',   0: '',   3: 'k',
+          6: 'M',   9: 'G',  12: 'T',  15: 'P',  18: 'E',  21: 'Z',
+         24: 'Y',  27: 'R',  30: 'Q',
     }
-    eng_notation_string = "{:.{}f} {}".format(number / 10 ** exponent, casas, unit.get(exponent, ''))
-    if string: return eng_notation_string
-    else: return {
-        'value': number / 10 ** exponent,
-        'casas': casas, 
-        'unit': unit.get(exponent, ''),
-        'fator': 10 ** exponent,
-        }
+    if string:
+        return "{:.{}f} {}".format(number / 10 ** exponent, decimals, unit.get(exponent, ''))
+    return {
+        'value':   number / 10 ** exponent,
+        'decimals': decimals,
+        'unit':    unit.get(exponent, ''),
+        'factor':  10 ** exponent,
+    }
 
-def getValue(number,s,axe,casas = 2):
-    """
-    Formata um valor numérico com notação de engenharia e unidade apropriada.
-    
+
+def format_value(number, series, axis, decimals=2):
+    """Format a numeric value with engineering notation and the correct unit.
+
     Args:
-        number (float): Valor numérico a ser formatado (em unidades normalizadas).
-        s (dict): Dicionário com informações da série, contendo:
-            - 'engNoteX': fator de escala do eixo X.
-            - 'engNoteY': fator de escala do eixo Y.
-            - 'symbolX': símbolo da unidade do eixo X.
-            - 'symbolY': símbolo da unidade do eixo Y.
-        axe (str): Tipo de valor a formatar:
-            - 'x': tempo/posição no eixo X.
-            - 'y': amplitude no eixo Y.
-            - 'f': frequência (inverso do tempo).
-            - 'bps': taxa de bits por segundo.
-            - 'v/t': slew rate (V/µs).
-        casas (int, optional): Número de casas decimais. Padrão é 2.
-    
+        number (float): Value to format (in normalised units).
+        series (dict): Series metadata containing:
+
+            - ``'engNoteX'``: X-axis scale factor.
+            - ``'engNoteY'``: Y-axis scale factor.
+            - ``'symbolX'``: X-axis unit symbol.
+            - ``'symbolY'``: Y-axis unit symbol.
+
+        axis (str): Type of value:
+
+            - ``'x'``   – time / X position.
+            - ``'y'``   – amplitude.
+            - ``'f'``   – frequency (inverse of time).
+            - ``'bps'`` – bits per second.
+            - ``'v/t'`` – slew rate (V/µs).
+
+        decimals (int, optional): Decimal places. Defaults to ``2``.
+
     Returns:
-        str: Valor formatado com notação de engenharia e unidade, ex: "1.23 ms", "456.78 V".
-            Retorna string de erro se 'axe' for inválido.
+        str: Formatted string with unit, e.g. ``'1.23 ms'``, ``'456.78 V'``.
     """
-    if axe == 'x':
-        return getEngSTR(number*s['engNoteX'],casas)+s['symbolX']
-    if axe == 'f':
-        return getEngSTR(number/s['engNoteX'],casas)+'Hz'
-    if axe == 'bps':
-        return getEngSTR(number/s['engNoteX'],casas)+'bps'
-    if axe == 'y':
-        return getEngSTR(number*s['engNoteY'],casas)+s['symbolY']
-    if axe == 'v/t':
-        return getEngSTR(number*s['engNoteX']*1e6,casas)+'V/µs'
-    return 'ERROR: getValue(axe = '+axe+')' 
+    if axis == 'x':
+        return format_eng_str(number * series['engNoteX'], decimals) + series['symbolX']
+    if axis == 'f':
+        return format_eng_str(number / series['engNoteX'], decimals) + 'Hz'
+    if axis == 'bps':
+        return format_eng_str(number / series['engNoteX'], decimals) + 'bps'
+    if axis == 'y':
+        return format_eng_str(number * series['engNoteY'], decimals) + series['symbolY']
+    if axis == 'v/t':
+        return format_eng_str(number * series['engNoteX'] * 1e6, decimals) + 'V/µs'
+    return 'ERROR: format_value(axis=' + axis + ')'
+
 
 def auto_scale(array):
+    """Return engineering-notation breakdown for the span of *array*.
+
+    Args:
+        array (array-like): Numeric array.
+
+    Returns:
+        dict: Breakdown dict from :func:`format_eng_str` with
+            ``value``, ``decimals``, ``unit`` and ``factor`` keys.
+    """
     span = np.max(array) - np.min(array)
-    return getEngSTR(span,string=False)
+    return format_eng_str(span, string=False)
 
-def normaliza_data(valor):
-    # Se já for datetime
-    if isinstance(valor, datetime):
-        dt = valor
 
-    # Se for timestamp (float/int)
-    elif isinstance(valor, (int, float)):
-        dt = datetime.fromtimestamp(valor)
+def normalize_data(value):
+    """Normalise a date/time value to a formatted string.
 
-    # Se for string (CSV)
-    elif isinstance(valor, str):
-        formatos = [
+    Accepts a :class:`datetime`, a Unix timestamp (int/float) or a
+    date string in several formats.
+
+    Args:
+        value (datetime | int | float | str): Input value.
+
+    Returns:
+        str: Date/time string in ``'DD/MM/YYYY - HH:MM:SS'`` format.
+
+    Raises:
+        ValueError: If *value* is a string in an unknown format.
+        TypeError: If *value* is of an unsupported type.
+    """
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, (int, float)):
+        dt = datetime.fromtimestamp(value)
+    elif isinstance(value, str):
+        formats = [
             "%Y-%m-%dT%H:%M:%S.%f",
             "%Y-%m-%dT%H:%M:%S",
             "%d/%m/%Y - %H:%M:%S.%f",
             "%d/%m/%Y - %H:%M:%S",
         ]
-
-        for fmt in formatos:
+        for fmt in formats:
             try:
-                dt = datetime.strptime(valor, fmt)
+                dt = datetime.strptime(value, fmt)
                 break
             except ValueError:
                 continue
         else:
-            raise ValueError(f"Formato desconhecido: {valor}")
-
+            raise ValueError(f"Unknown format: {value}")
     else:
-        raise TypeError(f"Tipo não suportado: {type(valor)}")
+        raise TypeError(f"Unsupported type: {type(value)}")
 
     return dt.strftime("%d/%m/%Y - %H:%M:%S")

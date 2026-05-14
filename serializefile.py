@@ -1,31 +1,32 @@
 import os
 import glob
 import time
-from selectcom import selecionar_e_abrir_porta
+from selectcom import select_and_open_port
 import subprocess
 import sys
 import dirHandle as dh
 from datetime import datetime
-
 import argparse
 
 # ================= CONFIG =================
-DIRETORIO_LOCAL = "."
-DESTINO_REMOTO = "."
-DELIMITADOR = "__END_OF_LUA_837462__"
-DELAY_LINHA = 0.003
-BAUDRATE = 115200
+LOCAL_DIR    = "."
+REMOTE_DEST  = "."
+DELIMITER    = "__END_OF_LUA_837462__"
+LINE_DELAY   = 0.003
+BAUDRATE     = 115200
 # ==========================================
 
 
-def ajustar_data_hora(ser):
-    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def sync_datetime(ser):
+    """Set the remote device clock to the current system time.
 
-    print(f"Ajustando data/hora: {agora}")
-
-    ser.write(f'date -s "{agora}"\n'.encode())
+    Args:
+        ser (serial.Serial): Open serial connection to the device.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"Setting date/time: {now}")
+    ser.write(f'date -s "{now}"\n'.encode())
     time.sleep(0.5)
-
     ser.write(b'hwclock -w\n')
     time.sleep(0.5)
 
@@ -34,109 +35,104 @@ port = None
 if len(sys.argv) == 2:
     port = sys.argv[1].upper()
 
+print("=== SERIAL FILE DEPLOY ===\n")
 
-print("=== DEPLOY SERIAL DE ARQUIVOS LUA ===\n")
-
-ser = selecionar_e_abrir_porta(BAUDRATE,port)
+ser = select_and_open_port(BAUDRATE, port)
 
 if ser is None:
-    print("Encerrando.")
+    print("Exiting.")
     exit()
 
-ajustar_data_hora(ser)
+sync_datetime(ser)
 
 
+def send_line(cmd, delay=0.2):
+    """Send a single command line over the serial connection.
 
-
-def enviar_linha(cmd, delay=0.2):
+    Args:
+        cmd (str): Command string (newline appended automatically).
+        delay (float, optional): Seconds to wait after sending.
+            Defaults to ``0.2``.
+    """
     ser.write((cmd + "\n").encode("utf-8"))
     time.sleep(delay)
 
 
-def esperar_prompt(timeout=5):
-    fim = time.time() + timeout
-    buffer = ""
+def wait_for_prompt(timeout=5):
+    """Block until a shell prompt character is received.
 
-    while time.time() < fim:
+    Args:
+        timeout (float, optional): Maximum wait in seconds. Defaults to ``5``.
+
+    Returns:
+        bool: ``True`` if a prompt (``#`` or ``$``) was detected,
+            ``False`` if the timeout expired.
+    """
+    deadline = time.time() + timeout
+    buffer = ""
+    while time.time() < deadline:
         if ser.in_waiting:
             buffer += ser.read(ser.in_waiting).decode(errors="ignore")
             if "#" in buffer or "$" in buffer:
                 return True
         time.sleep(0.1)
-
     return False
 
 
-print("Procurando arquivos .lua...\n")
+print("Searching for .lua files...\n")
 
-arquivos = glob.glob(os.path.join(DIRETORIO_LOCAL, "*.lua"))
+files = glob.glob(os.path.join(LOCAL_DIR, "*.lua"))
 
-if not arquivos:
-    print("Nenhum arquivo .lua encontrado.")
+if not files:
+    print("No .lua files found.")
     ser.close()
     exit()
 
-for caminho in arquivos:
-    nome = os.path.basename(caminho)
-    remoto = f"{DESTINO_REMOTO}/{nome}".replace("//", "/")
+for path_file in files:
+    name = os.path.basename(path_file)
+    remote = f"{REMOTE_DEST}/{name}".replace("//", "/")
 
-    print(f"Enviando {nome}...")
+    print(f"Sending {name}...")
 
-    # Remove remoto
-    enviar_linha(f"rm -f {remoto}", 0.1)
+    send_line(f"rm -f {remote}", 0.1)
+    send_line(f"cat > {remote} << '{DELIMITER}'", 0.2)
 
-    # Inicia HEREDOC
-    enviar_linha(f"cat > {remoto} << '{DELIMITADOR}'", 0.2)
+    with open(path_file, "r", encoding="utf-8") as f:
+        content = f.read()
 
-    # Lê conteúdo
-    with open(caminho, "r", encoding="utf-8") as f:
-        conteudo = f.read()
+    content = content.rstrip("\n") + "\n"
 
-    # Garante newline final
-    conteudo = conteudo.rstrip("\n") + "\n"
+    for line in content.splitlines(True):
+        ser.write(line.encode("utf-8"))
+        time.sleep(LINE_DELAY)
 
-    # Envia conteúdo
-    for linha in conteudo.splitlines(True):
-        ser.write(linha.encode("utf-8"))
-        time.sleep(DELAY_LINHA)
+    send_line(DELIMITER, 0.3)
 
-    # Finaliza HEREDOC
-    enviar_linha(DELIMITADOR, 0.3)
-
-    # Aguarda prompt
-    if esperar_prompt():
-        print(f"{nome} enviado com sucesso.\n")
+    if wait_for_prompt():
+        print(f"{name} sent successfully.\n")
     else:
-        print(f"⚠ Prompt não detectado após envio de {nome}\n")
+        print(f"⚠ Prompt not detected after sending {name}\n")
 
-print("Transferência concluída.")
-porta = ser.port
+print("Transfer complete.")
+serial_port = ser.port
 ser.close()
 time.sleep(0.5)
 
-usar_putty_gui = "-p" in sys.argv
+use_putty = "-p" in sys.argv
 try:
-    if usar_putty_gui:
-        dh.Aviso(f"Abrindo terminal externo\n",'verde')
-        # Abre PuTTY GUI
+    if use_putty:
+        dh.print_colored("Opening external terminal\n", 'GREEN')
         subprocess.Popen([
             r"C:\Program Files\PuTTY\putty.exe",
-            "-serial",
-            porta,
-            "-sercfg",
-            f"{BAUDRATE},8,n,1,N"
+            "-serial", serial_port,
+            "-sercfg", f"{BAUDRATE},8,n,1,N"
         ])
     else:
-        # Abre no próprio CMD usando plink
-        dh.Aviso(f"Abrindo terminal serial...\n",'verde')
+        dh.print_colored("Opening serial terminal...\n", 'GREEN')
         print("#")
         subprocess.run([
-                "plink",
-                "-serial",
-                porta,
-                "-sercfg",
-                f"{BAUDRATE},8,n,1,N"
-            ]
-        )
-except:
-    dh.Aviso("Terminal fechado",'vermelho')
+            "plink", "-serial", serial_port,
+            "-sercfg", f"{BAUDRATE},8,n,1,N"
+        ])
+except Exception:
+    dh.print_colored("Terminal closed", 'RED')

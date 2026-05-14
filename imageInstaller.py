@@ -1,5 +1,5 @@
 import time
-from selectcom import abrir_porta
+from selectcom import open_port
 
 
 def read_until(ser, expected, timeout=120):
@@ -22,9 +22,9 @@ def read_until(ser, expected, timeout=120):
     return False
 
 
-def executar_instalacao(porta, baudrate, ip, arquivo):
+def run_installation(porta, baudrate, ip, arquivo):
 
-    ser = abrir_porta(porta, baudrate)
+    ser = open_port(porta, baudrate)
 
     if not ser:
         print("Erro ao abrir porta")

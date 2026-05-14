@@ -2,73 +2,99 @@ import serial
 import serial.tools.list_ports
 import time
 
+DEFAULT_BAUDRATE = 115200
 
-BAUDRATE_PADRAO = 115200
 
+def list_ports(silent=False, port=None):
+    """List available serial ports.
 
-def listar_portas(noPrint = False,port=None):
-    portas = list(serial.tools.list_ports.comports())
-    if noPrint: return portas
-    
-    if not portas:
-        print("Nenhuma porta serial encontrada.")
+    Args:
+        silent (bool, optional): If ``True``, return the port list without
+            printing. Defaults to ``False``.
+        port (str, optional): If given, mark the matching port as the
+            auto-selected choice. Defaults to ``None``.
+
+    Returns:
+        list or tuple: Port list when *silent* is ``True``;
+            ``(ports, match_index)`` otherwise.
+    """
+    ports = list(serial.tools.list_ports.comports())
+    if silent:
+        return ports
+
+    if not ports:
+        print("No serial port found.")
         return []
 
-    print("\nPortas seriais disponíveis:\n")
-    match=None
-    for i, porta in enumerate(portas):
-        #print(f"[{i}] {porta.device}")
-        print(f"     {i} -> {porta.device}\t{porta.description}",end="\t")
-        print(f"Brand: {porta.manufacturer}")
-        if port == porta.device: match = i
-        #print(f"     HWID      : {porta.hwid}")
-        #print()
+    print("\nAvailable serial ports:\n")
+    match = None
+    for i, p in enumerate(ports):
+        print(f"     {i} -> {p.device}\t{p.description}", end="\t")
+        print(f"Brand: {p.manufacturer}")
+        if port == p.device:
+            match = i
 
-    return portas,match
+    return ports, match
 
-def abrir_porta(porta, baudrate=BAUDRATE_PADRAO):
+
+def open_port(port, baudrate=DEFAULT_BAUDRATE):
+    """Open a serial port.
+
+    Args:
+        port (str): Port name (e.g. ``'COM3'``).
+        baudrate (int, optional): Baud rate. Defaults to
+            :data:`DEFAULT_BAUDRATE`.
+
+    Returns:
+        serial.Serial or None: Open serial object, or ``None`` on failure.
+    """
     try:
-        ser = serial.Serial(porta, baudrate, timeout=1)
+        ser = serial.Serial(port, baudrate, timeout=1)
         time.sleep(2)
         return ser
-
     except serial.SerialException as e:
         msg = str(e)
-
         if "PermissionError" in msg or "Acesso negado" in msg:
-            print(f"\n⚠  A porta {porta} está em uso por outro programa.")
-            print("Feche o programa que está usando a porta e tente novamente.\n")
+            print(f"\n⚠  Port {port} is in use by another program.")
+            print("Close the program using the port and try again.\n")
         else:
-            print(f"\n⚠  Não foi possível abrir {porta}")
-            print(f"Erro: {e}\n")
-
+            print(f"\n⚠  Could not open {port}")
+            print(f"Error: {e}\n")
         return None
 
 
-def selecionar_e_abrir_porta(baudrate=BAUDRATE_PADRAO,port=None):
+def select_and_open_port(baudrate=DEFAULT_BAUDRATE, port=None):
+    """Interactively select and open a serial port.
+
+    Args:
+        baudrate (int, optional): Baud rate. Defaults to
+            :data:`DEFAULT_BAUDRATE`.
+        port (str, optional): Pre-selected port name; skips the prompt if
+            found. Defaults to ``None``.
+
+    Returns:
+        serial.Serial or None: Open serial object, or ``None`` if the user
+            cancels or no ports are available.
+    """
     while True:
-        portas,match = listar_portas(port=port)
+        ports, match = list_ports(port=port)
 
-        if not portas:
+        if not ports:
             return None
-            
-        try:
-            if match != None:
-                escolha  = match
-            else: escolha = int(input("Selecione o número da porta desejada: "))
-            if 0 <= escolha < len(portas):
-                porta = portas[escolha].device
-                ser = abrir_porta(porta, baudrate)
 
+        try:
+            choice = match if match is not None else int(input("Select port number: "))
+            if 0 <= choice < len(ports):
+                device = ports[choice].device
+                ser = open_port(device, baudrate)
                 if ser:
-                    print(f"\n✅ Porta {porta} aberta com sucesso!\n")
+                    print(f"\n✅ Port {device} opened successfully!\n")
                     return ser
                 else:
-                    continuar = input("Deseja tentar outra porta? (s/n): ").lower()
-                    if continuar != "s":
+                    again = input("Try another port? (y/n): ").lower()
+                    if again != "y":
                         return None
             else:
-                print("Número inválido.\n")
-
+                print("Invalid number.\n")
         except ValueError:
-            print("Digite um número válido.\n")
+            print("Enter a valid number.\n")

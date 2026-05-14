@@ -63,7 +63,7 @@ class Scope:
     # ---------------------------------------------------------
     # Verifica se já existe o arquivo
     # ---------------------------------------------------------
-    def checkExistentFile(self,caminho_arquivo):
+    def _file_exists(self,caminho_arquivo):
         if os.path.exists(caminho_arquivo):
             if self.overwrite:
                 return False   # Sobrescreve direto sem perguntar
@@ -82,7 +82,7 @@ class Scope:
     # ---------------------------------------------------------
     def capture_waveform(self, channel, filename):
         filename += ".csv"
-        if self.checkExistentFile(filename):
+        if self._file_exists(filename):
             return
         try: 
             time, voltage, metadata = self.driver.capture_waveform(channel)
@@ -111,7 +111,7 @@ class Scope:
         self.driver.set_channel_settings(ch,info)
         
         filename += "-screen.png"
-        if self.checkExistentFile(filename):
+        if self._file_exists(filename):
             return
         data = self.driver.capture_screen()
 

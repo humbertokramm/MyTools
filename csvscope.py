@@ -7,7 +7,7 @@
 
 **Classe Principal**
 
-``class csvscope``
+``class CsvScope``
     
     Processa sinais de osciloscópios com suporte para:
     - Múltiplos formatos de arquivo CSV
@@ -30,7 +30,7 @@
     ``__init__(title='Minhas Leituras', path='')``
         Inicializa uma instância da classe csvscope.
     
-    ``getEng(nota, s=False)``
+    ``format_eng(nota, s=False)``
         Extrai notação de engenharia de labels.
         
         :param nota: String com notação entre colchetes
@@ -85,7 +85,7 @@ from engMath import *
 
 
 
-class csvscope:
+class CsvScope:
 	"""
 	Classe para processamento e visualização de dados de osciloscópios e instrumentos de medição.
 	
@@ -129,7 +129,7 @@ class csvscope:
 	def __str__(self):
 		return self.title
 
-	def filtro(self,name='ch1',fc=1e3,ordem=2,overwrite=True,corte=0.2):
+	def filter_signal(self,name='ch1',fc=1e3,ordem=2,overwrite=True,corte=0.2):
 		"""
 		Aplica um filtro passa-baixas Butterworth a uma série de dados.
 		
@@ -151,7 +151,7 @@ class csvscope:
 			O filtro remove transientes iniciais descartando uma porcentagem das amostras.
 		"""
 		try:
-			i= self.getOrder().index(name)
+			i= self.get_order().index(name)
 		except:
 			print('não foi encontrada uma lista com o nome '+str(name))
 			return
@@ -164,14 +164,14 @@ class csvscope:
 		sinal_filtrado=pd.DataFrame(sinal_filtrado)
 		if overwrite:
 			corte = int(len(sinal_filtrado)*(corte/100))
-			self.reads[i]['data'] += f'[Filtered with order {ordem} Butterworth @ {getEngSTR(fc,2)}Hz]'
+			self.reads[i]['data'] += f'[Filtered with order {ordem} Butterworth @ {format_eng_str(fc,2)}Hz]'
 			self.reads[i]['y'] = sinal_filtrado[corte:]
 			self.reads[i]['x'] = self.reads[i]['x'][corte:]
 		return self.reads[i]['x']*self.reads[i]['engNoteX'],sinal_filtrado*self.reads[i]['engNoteY']
 
-	def filtroInterno(self,df,filtro=[1e3,4]):
-		fc = filtro[0]
-		ordem = filtro[1]
+	def _apply_filter(self,df,filter_params=[1e3,4]):
+		fc = filter_params[0]
+		ordem = filter_params[1]
 		T=df['x'].iat[1]-df['x'].iat[0]
 		fs = 1/(T*df['engNoteX'])
 		# filtro passa-baixas Butterworth
@@ -182,7 +182,7 @@ class csvscope:
 		df['y'] = sinal_filtrado[sinal_filtrado.columns[0]]
 		df['x'] = df['x'].reset_index(drop = True)
 
-	def detectBrandFile(self, f):
+	def detect_brand_file(self, f):
 		brand = ''
 		try:
 			with open(f, 'r') as file:
@@ -211,7 +211,7 @@ class csvscope:
 			print( f"Ocorreu um erro: {e}")
 		return brand
 
-	def MtoolCSV(self,f):
+	def load_mtool_csv(self,f):
 		with open(f, newline='') as csvfile:
 			leitor_csv = csv.reader(csvfile, delimiter=';')
 			data = {}
@@ -232,14 +232,14 @@ class csvscope:
 			df[timeLabel] = df[timeLabel] / 1000
 		return df
 
-	def TektronixCSV(self,f):
+	def load_tektronix_csv(self,f):
 		df = pd.read_csv(f, header=None)
 		labely = df[1][6]
 		df = df.drop(df.columns[[0, 1, 2,5]], axis=1)
 		df.columns = ['in s',labely]
 		return df
 
-	def loadUSBVisa(self,file):
+	def load_usb_visa(self,file):
 		instrumento = None
 		data = None
 		
@@ -255,14 +255,14 @@ class csvscope:
 				
 				if linha.startswith("# Data da captura:"):
 					data_raw = linha.split(": ", 1)[1].strip()
-					data = normaliza_data(data_raw)
+					data = normalize_data(data_raw)
 		
 		# Ler dataframe ignorando comentários
 		df = pd.read_csv(file, comment="#", encoding='latin-1')
 		df.columns = ['in s',"ch1 in V"]
 		return df, instrumento, data
 
-	def readFile(self, f,data):
+	def read_file(self, f,data):
 		if type(f) != type(" "): f = str(f)
 		i = f.lower().find('.csv')
 		if i > 0:
@@ -270,24 +270,24 @@ class csvscope:
 		else:
 			f = f+'.csv'
 		
-		brd = self.detectBrandFile(f)
+		brd = self.detect_brand_file(f)
 		infoFile = os.stat(f).st_ctime
-		info = normaliza_data(infoFile)
+		info = normalize_data(infoFile)
 
 		if brd == 'TDS3052B':
 			df = pd.read_csv(f)
 			df = df.rename(columns={'TDS3052B in s':'in s'})
 		elif brd[:3] == 'TDS':
-			df = self.TektronixCSV(f)
+			df = self.load_tektronix_csv(f)
 		elif brd == 'Master Tool':
-			df = self.MtoolCSV(f)
+			df = self.load_mtool_csv(f)
 		elif brd == 'USB.VISA':
-			df,brd,info = self.loadUSBVisa(f)
+			df,brd,info = self.load_usb_visa(f)
 		else: df = pd.read_csv(f)
 		data['data'] = brd +' - '+ info
 		return df
 
-	def manualTable(self,x,y,dados):
+	def add_manual_table(self,x,y,dados):
 		table = [x,y]
 		df = pd.DataFrame(table)
 		df = df.transpose()
@@ -295,7 +295,7 @@ class csvscope:
 		dados['data'] = 'None'
 		return df
 
-	def formatLinhaH(self, y,n='serie',color=False,config=[]):
+	def format_h_line(self, y,n='serie',color=False,config=[]):
 		"""
 		Cria uma linha horizontal de referência no gráfico.
 		
@@ -312,14 +312,14 @@ class csvscope:
 		Note:
 			A linha será estendida automaticamente para cobrir todo o eixo X do gráfico.
 		"""
-		dados = self.setData(n,config,'Line H')
+		dados = self.set_data(n,config,'Line H')
 		if color: dados['color']=color
 		#lx=config['label x'] if 'label x' in config else 'Tempo[ms]'
 		#ly=config['label y'] if 'label y' in config else 'Tensão[V]'
 		#pln=config['plane'] if 'plane' in config else 1
 
 		if not isinstance(y, (int, float)):
-			print('ERROR formatLinhaH: Entre com um número válido em y')
+			print('ERROR format_h_line: Entre com um número válido em y')
 			return 'nan'
 
 		table = [[None,None],[y,y]]
@@ -329,12 +329,12 @@ class csvscope:
 		dados['data'] = 'None'
 		
 		# Manipula as escala
-		self.handleScales(dados,df)
-		self.areaGraf4(dados)
+		self._handle_scales(dados,df)
+		self._plot_area4(dados)
 		self.reads.append(dados)
 		return dados
 
-	def formatLinhaV(self, x,n='serie',color=False,config=[]):
+	def format_v_line(self, x,n='serie',color=False,config=[]):
 		"""
 		Cria uma linha vertical de referência no gráfico.
 		
@@ -351,11 +351,11 @@ class csvscope:
 		Note:
 			A linha será estendida automaticamente para cobrir todo o eixo Y do gráfico.
 		"""
-		dados = self.setData(n,config,'Line V')
+		dados = self.set_data(n,config,'Line V')
 		if color: dados['color']=color
 
 		if not isinstance(x, (int, float)):
-			print('ERROR formatLinhaV: Entre com um número válido em x')
+			print('ERROR format_v_line: Entre com um número válido em x')
 			return 'nan'
 
 		table = [[x,x],[None,None]]
@@ -365,12 +365,12 @@ class csvscope:
 		dados['data'] = 'None'
 		
 		# Manipula as escala
-		self.handleScales(dados,df)
-		self.areaGraf4(dados)
+		self._handle_scales(dados,df)
+		self._plot_area4(dados)
 		self.reads.append(dados)
 		return dados
 
-	def getOrder(self):
+	def get_order(self):
 		"""
 		Retorna lista com os nomes de todas as séries carregadas, na ordem atual.
 		
@@ -382,7 +382,7 @@ class csvscope:
 			list.append(n['name'])
 		return list
 
-	def setOrder(self,names='nan',index='nan'):
+	def set_order(self,names='nan',index='nan'):
 		"""
 		Reordena as séries carregadas conforme a lista de nomes fornecida.
 		
@@ -401,12 +401,12 @@ class csvscope:
 		if type(names) == type([]):
 			self.reads = []
 			for n in names:
-				v,_= self.findkey(temp,n)
+				v,_= self._find_key(temp,n)
 				if not v == None: self.reads.append(v)
 			return True
 		else: return False
 
-	def setData(self, n,config,modo):
+	def set_data(self, n,config,modo):
 		lx=config['label x'] if 'label x' in config else self.labelx
 		ly=config['label y'] if 'label y' in config else 'Voltage[V]'
 		brd=config['brand'] if 'brand' in config else 'ROHDE'
@@ -420,12 +420,12 @@ class csvscope:
 			'labely':ly,
 			'name': n,
 			'plane':pln,
-			'engNoteX':getEng(lx),
-			'engNoteY':getEng(ly),
-			'engNoteXstr':getEng(lx,'str'),
-			'engNoteYstr':getEng(ly,'str'),
-			'symbolX':getEng(lx,'symbol'),
-			'symbolY':getEng(ly,'symbol'),
+			'engNoteX':format_eng(lx),
+			'engNoteY':format_eng(ly),
+			'engNoteXstr':format_eng(lx,'str'),
+			'engNoteYstr':format_eng(ly,'str'),
+			'symbolX':format_eng(lx,'symbol'),
+			'symbolY':format_eng(ly,'symbol'),
 			'type': modo,
 			#'brand':brd,
 			'offset time':ot,
@@ -444,15 +444,15 @@ class csvscope:
 		#pprint(dados)
 		return dados
 
-	def handleScales(self, d,df,o=0,gain=None,c=1):
+	def _handle_scales(self, d,df,o=0,gain=None,c=1):
 		lx = d['labelx']
 		ly = d['labely']
 		ot = d['offset time']
 		g = gain if gain != None else d['gain']
-		d['x'] = df[df.columns[0]].astype(float)*(1/getEng(lx))+ot*(1/getEng(lx))
-		d['y'] = df[df.columns[c]].astype(float)*g*(1/getEng(ly))+o*(1/getEng(ly))
+		d['x'] = df[df.columns[0]].astype(float)*(1/format_eng(lx))+ot*(1/format_eng(lx))
+		d['y'] = df[df.columns[c]].astype(float)*g*(1/format_eng(ly))+o*(1/format_eng(ly))
 
-	def handleCuts(self,df,config):
+	def _handle_cuts(self,df,config):
 		coi=config['cutoff in'] if 'cutoff in' in config else 'nan'
 		coo=config['cutoff out'] if 'cutoff out' in config else 'nan'
 		# Verificar se a coluna 'in s' existe
@@ -463,7 +463,7 @@ class csvscope:
 		if not coo =='nan': df = df.loc[df['in s'] <= coo]
 		return df
 
-	def format(self, f='TRC01',g=None,o=0,c=1,x=[],y=[],n='nan',color=False,config=[],filtro=0):
+	def load(self, f='TRC01',g=None,o=0,c=1,x=[],y=[],n='nan',color=False,config=[],low_pass=0):
 		"""
 		Carrega e formata uma série de dados de um arquivo CSV ou dados manuais.
 		
@@ -504,12 +504,12 @@ class csvscope:
 		"""
 		
 		# Carrega as configurações
-		dados = self.setData(n,config,'signal')
+		dados = self.set_data(n,config,'signal')
 		if color: dados['color']=color
 		
 		# carrega o dataframe
-		if len(x)==0: df = self.readFile(f,dados)
-		else: df = self.manualTable(x,y,dados)
+		if len(x)==0: df = self.read_file(f,dados)
+		else: df = self.add_manual_table(x,y,dados)
 		
 		# verifica o tamanho
 		if(c+1 > len(df.columns)):
@@ -520,20 +520,20 @@ class csvscope:
 		if n == 'nan':
 			dados['name'] = df.columns[c]
 		# Manipula os cortes
-		df = self.handleCuts(df,config)
+		df = self._handle_cuts(df,config)
 		if type(df) == type('nan'): return 'nan'
 		
 		samplingPeriod  = df.iloc[1,0]-df.iloc[0,0]
 		samplingFrequency = 1/samplingPeriod
-		samplingPeriod = getEngSTR(samplingPeriod)+'s'
-		samplingFrequency = getEngSTR(samplingFrequency)+'Hz'
+		samplingPeriod = format_eng_str(samplingPeriod)+'s'
+		samplingFrequency = format_eng_str(samplingFrequency)+'Hz'
 
 		# Manipula as escala
-		self.handleScales(dados,df,o,g,c)
-		self.areaGraf4(dados)
-		if type(filtro) == type([]):
-			self.filtroInterno(dados,filtro)
-		self.getAnotations(dados)
+		self._handle_scales(dados,df,o,g,c)
+		self._plot_area4(dados)
+		if type(low_pass) == type([]):
+			self._apply_filter(dados,low_pass)
+		self.get_annotations(dados)
 		self.reads.append(dados)
 		
 		dados['samplingPeriod'] = samplingPeriod
@@ -542,20 +542,20 @@ class csvscope:
 
 		return dados
 
-	def getAnotations(self, dados):
+	def get_annotations(self, dados):
 		for busca in ['note','findY','findT']:
 				if busca in dados:
 					for n in dados[busca]:
-						self.anotation(n,dados,busca)
+						self.annotation(n,dados,busca)
 
-	def findkey(self,list,value,key='name'):
+	def _find_key(self,list,value,key='name'):
 		for i,dictio in enumerate(list):
 			if key in dictio:
 				if dictio[key] == value:
 					return dictio,i
 		return None,None
 
-	def findkey2(self,col,value,n):
+	def _find_key_by_col(self,col,value,n):
 		index = -1
 		for row in col:
 			index += 1
@@ -565,7 +565,7 @@ class csvscope:
 						return i[0][0],index
 		return None,None
 
-	def drawDelay(self, s1,n1,s2,n2,u='s',name=''):
+	def draw_delay(self, s1,n1,s2,n2,u='s',name=''):
 		"""
 		Desenha anotação de delay entre dois pontos de diferentes séries.
 		
@@ -586,9 +586,9 @@ class csvscope:
 			- Os pontos devem ter sido criados previamente com anotações 'findY' ou 'findT'.
 			- Desenha linha horizontal conectando os dois pontos e texto com o valor do delay.
 		"""
-		cord1,indexLabel = self.findkey2(self.yDf['draw'],s1,n1)
-		cord2,indexLabel = self.findkey2(self.yDf['draw'],s2,n2)
-		s_,_ = self.findkey(self.reads,s1)
+		cord1,indexLabel = self._find_key_by_col(self.yDf['draw'],s1,n1)
+		cord2,indexLabel = self._find_key_by_col(self.yDf['draw'],s2,n2)
+		s_,_ = self._find_key(self.reads,s1)
 
 		if cord1 == None:
 			print(n1+' não existe em '+s1)
@@ -620,16 +620,16 @@ class csvscope:
 			if u == 'Hz': name='Freq'
 			if u == 'bps': name='bit rate'
 		
-		if u == 's': text = name + ' = '+getValue(dt,s_,'x')
-		if u == 'Hz': text = name + ' = '+getValue(1/dt,s_,'f')
-		if u == 'bps': text = name + ' = '+getValue(1/dt,s_,'bps')
+		if u == 's': text = name + ' = '+format_value(dt,s_,'x')
+		if u == 'Hz': text = name + ' = '+format_value(1/dt,s_,'f')
+		if u == 'bps': text = name + ' = '+format_value(1/dt,s_,'bps')
 		style = '-'
 		dir = 'NE'
 		xo=cord1[0] if cord1[0] < cord2[0] else cord2[0]
 		cordT = [[xo+dt/2,y],[None,None]]
 		self.yDf['draw'][indexLabel].append([meio,text,style,dir,n1])
 
-	def findNote(self,list, value,key='name'):
+	def _find_note(self,list, value,key='name'):
 		for i in range(len(list)):
 			if key in list[i]:
 				for point in range(len(list[i][key])):
@@ -637,7 +637,7 @@ class csvscope:
 						return i,point
 		return None,None
 
-	def interpolateDF(self,df,sampleTarget=1000):
+	def interpolate_df(self,df,sampleTarget=1000):
 		# Verificar o número de amostras no DataFrame atual
 		lenSample = len(df)
 		temp=df.tolist()
@@ -657,7 +657,7 @@ class csvscope:
 			df = df[df.columns[0]]
 		return df
 
-	def setAnotationDir(self,n,dir,newname=''):
+	def set_annotation_dir(self,n,dir,newname=''):
 		# Função para procurar e substituir com base no primeiro item da lista
 		def setL(lista, string_verificacao, substituto):
 			for i in range(len(lista)):
@@ -667,7 +667,7 @@ class csvscope:
 		# Aplicar a função a cada linha do DataFrame
 		self.yDf['draw'] = self.yDf.apply(lambda row: setL(row['draw'], n, dir), axis=1)
 	
-	def handleNoteName(self, d):
+	def _handle_note_name(self, d):
 		if type(d) == type({}):
 			especificName = list(d.keys())[0]
 			d = d[especificName]
@@ -676,21 +676,21 @@ class csvscope:
 			especificName = 'p'+str(self.indexNote)
 		return d, especificName
 
-	def anotation(self, d,s,n):
+	def annotation(self, d,s,n):
 		indexLabel = self.yDf.index[self.yDf['label'] == s['labely']].tolist()[0]
 		name = s['name']
 		if not 'info' in s: s['info']={}
-		x = self.interpolateDF(s['x'])
-		y = self.interpolateDF(s['y'])
+		x = self.interpolate_df(s['x'])
+		y = self.interpolate_df(s['y'])
 		if len(x) == 0: return print('ERROR ANOTATION: '+name+" has no signal")
-		d, id = self.handleNoteName(d)
+		d, id = self._handle_note_name(d)
 		if n == 'note':
 			if d == 'Vmáx':
 				i = y.idxmax()
 				y = y[i]
 				x = x[i]
 				cord=[[x,y],[None,None]]
-				text=d+ ': '+getValue(y,s,'y')
+				text=d+ ': '+format_value(y,s,'y')
 				style = '->'
 				dir = 'S'
 				s['info'][d]=[y,text]
@@ -702,7 +702,7 @@ class csvscope:
 				y = y[i]
 				x = x[i]
 				cord=[[x,y],[None,None]]
-				text=d+ ': '+getValue(y,s,'y')
+				text=d+ ': '+format_value(y,s,'y')
 				style = '->'
 				dir = 'N'
 				s['info'][d]=[y,text]
@@ -713,7 +713,7 @@ class csvscope:
 				rms = np.sqrt((y**2).mean())
 				meio = int(len(y)/2)
 				cord=[[x[meio],y[meio]],[None,None]]
-				text=d+ ': '+getValue(rms,s,'y',casas=4)
+				text=d+ ': '+format_value(rms,s,'y',casas=4)
 				style = '->'
 				dir = 'NE'
 				s['info'][d]=[rms,text]
@@ -728,7 +728,7 @@ class csvscope:
 				y2 = y[i2]
 				x2 = x[i2]
 				cord=[[x2,abs(y2-y1)/2+y1],[None,None]]
-				text=d+ ': '+getValue(y2-y1,s,'y')
+				text=d+ ': '+format_value(y2-y1,s,'y')
 				style = '-'
 				dir = 'NE'
 				self.yDf['draw'][indexLabel].append([cord,text,style,dir,name])
@@ -775,12 +775,12 @@ class csvscope:
 					cord=[[x2,y2],[None,None]]
 					dir = 'NE'
 					s['info'][d_]=[dt,text]
-				text=d_+ ': '+getValue(dt,s,'x')
+				text=d_+ ': '+format_value(dt,s,'x')
 				if d == 'transition in f':
-					text=d+ ': '+getValue(1/dt,s,'f')
+					text=d+ ': '+format_value(1/dt,s,'f')
 					s['info'][d]=[1/dt,text]
 				elif d == 'slew rate':
-					text=d+ ': '+getValue(dV/dt,s,'v/t')
+					text=d+ ': '+format_value(dV/dt,s,'v/t')
 					s['info'][d]=[dV/dt,text]
 				style = '->'
 				self.yDf['draw'][indexLabel].append([cord,text,style,dir,name])
@@ -799,7 +799,7 @@ class csvscope:
 				return
 
 			cord=[[x,y],[None,None]]
-			text=id+' ('+getValue(x,s,'x')+' , '+getValue(y,s,'y')+')'
+			text=id+' ('+format_value(x,s,'x')+' , '+format_value(y,s,'y')+')'
 			style = '->'
 			dir = 'NE'
 			s['info']['findY']=[id,y,text]
@@ -815,10 +815,10 @@ class csvscope:
 			#verifica se a diferença está dentro de um intervalo entre duas amostras
 			diff = d-x if d>x else x-d
 			if diff > amp:
-				print('not find t '+str(d)+' in '+name+' just '+str(x)+' p['+str(i)+'] diff = '+getValue(diff,s,'x'))
+				print('not find t '+str(d)+' in '+name+' just '+str(x)+' p['+str(i)+'] diff = '+format_value(diff,s,'x'))
 				return
 			cord=[[x,y],[None,None]]
-			text=id+' ('+getValue(x,s,'x')+' , '+getValue(y,s,'y')+')'
+			text=id+' ('+format_value(x,s,'x')+' , '+format_value(y,s,'y')+')'
 			style = '->'
 			dir = 'NE'
 			s['info'][id]=[y,text]
@@ -826,7 +826,7 @@ class csvscope:
 			return
 		return
 
-	def areaGraf(self, serie,axe,area=None):
+	def _plot_area(self, serie,axe,area=None):
 
 
 		if area == None:
@@ -857,7 +857,7 @@ class csvscope:
 
 		return area
 
-	def areaGraf4(self, serie):
+	def _plot_area4(self, serie):
 		# Obter o índice da linha que contém o valor "serie n" na coluna "Nome"
 		i = self.yDf.index[self.yDf['label'] == serie['labely']].tolist()[0]
 		
@@ -877,22 +877,22 @@ class csvscope:
 		self.yDf.loc[i,'yAr' ] =  self.yDf.loc[i,'yMax']-self.yDf.loc[i,'yMin']
 		return 
 
-	def plotNotes(self,f,ax,i):#,notes):
+	def _plot_notes(self,f,ax,i):#,notes):
 		factor= 0.05
 		figsize = f.get_size_inches()
 		rate= figsize[1]/figsize[0]
 		deltax = self.yDf['xAr'][i]*factor*rate
 		deltay = self.yDf['yAr'][i]*factor
 		#for note in notes:
-		#print('plotNotes()')
+		#print('_plot_notes()')
 		#pprint(self.yDf['draw'])
 		for note in self.yDf['draw'][i]:
 			#print('for note in self.yDf')
 			#pprint(note)
-			a=self.arrow(note,[deltax,deltay])
+			a=self._draw_arrow(note,[deltax,deltay])
 			ax.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],ha=a['ha'],va=a['va'],arrowprops=a['props'])
 
-	def arrow(self, n,d=0):
+	def _draw_arrow(self, n,d=0):
 		#print('arrow()')
 		#pprint(n)
 		xp = n[0][0][0]
@@ -927,10 +927,10 @@ class csvscope:
 		#pprint(result)
 		return result
 
-	def rolling_rms(self, x, N):
+	def _rolling_rms(self, x, N):
 		return (pd.DataFrame(abs(x)**2).rolling(N).mean()) **0.5
 
-	def completeLines(self):
+	def _complete_lines(self):
 		# trata o sinal
 		for serie in self.reads:
 			indexLabel = self.yDf.index[self.yDf['label'] == serie['labely']].tolist()[0]
@@ -940,15 +940,15 @@ class csvscope:
 				if serie['type'] == 'Line V':
 					serie['y'] = [self.yDf['yMin'][indexLabel],self.yDf['yMax'][indexLabel]]
 
-	def seriePlot(self,ax,serie):
+	def _plot_series(self,ax,serie):
 		if 'color' in serie:
-			ax.plot(serie['x'], serie['y'], linewidth=2.0,label=self.handleLabel(serie['name']),color=serie['color'])
+			ax.plot(serie['x'], serie['y'], linewidth=2.0,label=self._format_label(serie['name']),color=serie['color'])
 		else:
-			ax.plot(serie['x'], serie['y'], linewidth=2.0,label=self.handleLabel(serie['name']))
+			ax.plot(serie['x'], serie['y'], linewidth=2.0,label=self._format_label(serie['name']))
 		ax.set_ylabel(serie['labely'])
 		ax.legend()
 
-	def salvaFigura(self,obj,out='png',path='',t='nan',transparent=False):
+	def save_figure(self,obj,out='png',path='',t='nan',transparent=False):
 		filenames = []
 		if type([]) == type(out):
 			for o in out:
@@ -961,7 +961,7 @@ class csvscope:
 		for filename in filenames:
 			obj.savefig(dh.ajustar_nome_arquivo(filename), bbox_inches='tight', pad_inches=0, transparent=transparent)
 
-	def handleLabel(self,texto):
+	def _format_label(self,texto):
 		if texto.startswith("\\"):
 			partes = []
 			for caractere in texto[1:]:  # Pula a barra invertida inicial
@@ -973,7 +973,7 @@ class csvscope:
 		else:
 			return texto  # Retorna sem modificação
 
-	def handleMask(self,ax):
+	def _apply_mask(self,ax):
 		# =============================
 		# Optional logic mask
 		# =============================
@@ -1025,27 +1025,27 @@ class csvscope:
 		if self.reads == []: return print('ERROR PLOT: Planilha incompleta')
 		
 		# Completa as linhas horizontais e verticais com os limites do gráfico
-		self.completeLines()
+		self._complete_lines()
 		
 		# Inicia a plotagem
 		fig, ax = plt.subplots(figsize=size)#,axes_class=axisartist.Axes)
 		ax.set_title(t)
-		self.plotNotes(fig,ax,0)
+		self._plot_notes(fig,ax,0)
 		
 		if len(self.yDf)>1:
 			ax2 = ax.twinx() # Create another axes that shares the same x-axis as ax.
-			self.plotNotes(fig,ax2,1)
+			self._plot_notes(fig,ax2,1)
 		
-		ax = self.handleMask(ax)
+		ax = self._apply_mask(ax)
 		
 		# Percorre plota as séries
 		for serie in self.reads:
 			indexLabel = self.yDf.index[self.yDf['label'] == serie['labely']].tolist()[0]
 			#if serie['labely'] == self.ySeries[0]:
 			if indexLabel == 0:
-				self.seriePlot(ax,serie)
+				self._plot_series(ax,serie)
 			else:
-				self.seriePlot(ax2,serie)
+				self._plot_series(ax2,serie)
 			ax.set_xlabel(serie['labelx'])
 			ax.grid(grid)
 			
@@ -1061,12 +1061,12 @@ class csvscope:
 
 		plt.ion()  # Ativa o modo interativo
 		# Salva Figura
-		self.salvaFigura(plt,out,path,t,transparent)
+		self.save_figure(plt,out,path,t,transparent)
 		# Exibindo a figura
 		plt.show(block=False)
 		return
 
-	def formatFFT(self,id=0,name='',f = False):
+	def format_fft(self,id=0,name='',f = False):
 		"""
 		Calcula e armazena a Transformada de Fourier (FFT) de uma série de dados.
 		
@@ -1087,7 +1087,7 @@ class csvscope:
 			- Calcula apenas frequências positivas.
 		"""
 		if name != '':
-			_,id = self.findkey(self.reads,name)
+			_,id = self._find_key(self.reads,name)
 		d = self.reads[id]
 		
 		x = d['x']*d['engNoteX']
@@ -1096,7 +1096,7 @@ class csvscope:
 		fft = np.fft.fft(y)
 		fft[0] = 0
 		fftfreq = np.fft.fftfreq(len(y))*len(y)/(x.max()-x.min())
-		self.ifftData(fft,id,'ac_ripple',f=[fftfreq[1],fftfreq[-1]])
+		self.ifft_data(fft,id,'ac_ripple',f=[fftfreq[1],fftfreq[-1]])
 
 		# ---- Zona de interesse ----
 		if self.fftZone is not None and len(self.fftZone) > 0:
@@ -1104,7 +1104,7 @@ class csvscope:
 			for zone in self.fftZone:
 				if zone[0] == 'start': zone[0] = fftfreq[1]
 				if zone[1] == 'end': zone[1] = np.max(fftfreq)
-				self.fftFilter(fft,fftfreq,id,f=zone)
+				self.fft_filter(fft,fftfreq,id,f=zone)
 
 		a = []
 		b = []
@@ -1115,7 +1115,7 @@ class csvscope:
 		self.reads[id]['fft']={'f':a,'A':np.abs(b)}
 		if f: self.reads[id]['fft-tittle'] = f
 
-	def ifftData(self,fft,id,name,f=[None,None]):
+	def ifft_data(self,fft,id,name,f=[None,None]):
 		# reconstrução no tempo
 		y = np.fft.ifft(fft).real
 		vpp = np.max(y) - np.min(y)
@@ -1129,14 +1129,14 @@ class csvscope:
 			'f_max': f[1],
 		})
 	# ---- FILTRO PASSA-FAIXA (f_minHz a f_maxHz) ----
-	def fftFilter(self,fft,fftfreq,id,f=[None,None]):
+	def fft_filter(self,fft,fftfreq,id,f=[None,None]):
 		fft_filtered = fft.copy()
 		for i in range(len(fftfreq)):
 			if not (f[0] <= abs(fftfreq[i]) <= f[1]):
 				fft_filtered[i] = 0
-		self.ifftData(fft_filtered,id,'ac_ripple_filter',f=f)
+		self.ifft_data(fft_filtered,id,'ac_ripple_filter',f=f)
 
-	def plotFFT(self, t='Minhas Leituras',grid = True,size=(12, 6),axe='linear',out='png',mark=1,path='',transparent=False):
+	def plot_fft(self, t='Minhas Leituras',grid = True,size=(12, 6),axe='linear',out='png',mark=1,path='',transparent=False):
 		"""
 		Plota o espectro de frequência (FFT) das séries que possuem dados FFT calculados.
 		
@@ -1191,7 +1191,7 @@ class csvscope:
 				factor = 1
 				if axe =='log': plt.semilogx()
 				else:
-					symbol = getEngSTR(max(a))[-1]
+					symbol = format_eng_str(max(a))[-1]
 					factor = EngNotation[symbol]
 					a = [float(i) / factor for i in serie['fft']['f']]
 					plt.xlabel("Domínio da Frequência ["+symbol+"Hz]")
@@ -1210,7 +1210,7 @@ class csvscope:
 					y_ = y[i]
 					
 					cord=[[x_,y_],[None,None]]
-					text='p'+str(j)+': '+getEngSTR(x_*factor,0)+'Hz'
+					text='p'+str(j)+': '+format_eng_str(x_*factor,0)+'Hz'
 					style = '-'
 					dir = 'N'
 					serie['draw'].append([cord,text,style,dir])
@@ -1220,13 +1220,13 @@ class csvscope:
 				plt.grid(grid,which="both")
 				
 				temp={'x':x,'y':y}
-				area = self.areaGraf(temp,axe)
+				area = self._plot_area(temp,axe)
 				if serie['data'] != 'None':
 					textY = -area['yMax'] / 40
 					plt.text(area['xCenter'],textY, serie['data'], ha='center', fontsize=8)
 				
 				if 'ac_ripple' in serie:
-					vpp = getEngSTR(serie['ac_ripple'][0]['vpp'],2)
+					vpp = format_eng_str(serie['ac_ripple'][0]['vpp'],2)
 					text = f"AC Ripple: {vpp}Vpp"
 					plt.text(area['xTxt'], area['yMax']*0.9, text,ha=area['ha'], fontsize=10, color='black')
 
@@ -1235,9 +1235,9 @@ class csvscope:
 					for iZone, vZone in enumerate(serie['ac_ripple_filter']):
 						ZoneColor = list(mcolors.BASE_COLORS.keys())[iZone]
 						line -= 0.05
-						vpp = getEngSTR(vZone['vpp'],2)
-						strZonef1 = getEngSTR(vZone['f_min'],0)+"Hz"
-						strZonef2 = getEngSTR(vZone['f_max'],0)+"Hz"
+						vpp = format_eng_str(vZone['vpp'],2)
+						strZonef1 = format_eng_str(vZone['f_min'],0)+"Hz"
+						strZonef2 = format_eng_str(vZone['f_max'],0)+"Hz"
 						text = f"AC Ripple: {vpp}Vpp in {strZonef1} to {strZonef2}"
 						plt.text(area['xTxt'], area['yMax']*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
 						f_min_plot = vZone['f_min'] / factor
@@ -1247,11 +1247,11 @@ class csvscope:
 						plt.axvline(f_max_plot, color=ZoneColor, linestyle='--', linewidth=1)
 
 				for note in serie['draw']:
-					a=self.arrow(note,[0,0])
+					a=self._draw_arrow(note,[0,0])
 					#plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],arrowprops=dict(arrowstyle=a['arrowstyle'], linestyle=a['linestyle']))
 					plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],ha=a['ha'],va=a['va'],arrowprops=a['props'])
 				# Salva a figura
-				self.salvaFigura(plt,out,path,t,transparent)
+				self.save_figure(plt,out,path,t,transparent)
 				# Exibindo a figura
 				plt.show(block=False)
 		return
@@ -1285,7 +1285,7 @@ class csvscope:
 
 		return presets[mode]
 
-	def plotPAM(self, t='My Measurements', s=0, grid=True, size=(12, 8), out='png', path='', transparent=False, mode="1000BASE-T"):
+	def plot_pam(self, t='My Measurements', s=0, grid=True, size=(12, 8), out='png', path='', transparent=False, mode="1000BASE-T"):
 		"""
 		Plota diagrama de olho PAM (Pulse Amplitude Modulation) para sinais Ethernet.
 		
@@ -1416,7 +1416,7 @@ class csvscope:
 
 		# Finalize
 		plt.tight_layout()
-		self.salvaFigura(plt, out, path, t, transparent)
+		self.save_figure(plt, out, path, t, transparent)
 		plt.show(block=False)
 
 
@@ -1426,7 +1426,7 @@ class csvscope:
 			k = input(msg)
 			if k.lower() == abort: exit()
 		
-	def checkExistFile(self,n):
+	def file_exists(self,n):
 		if os.path.exists(n):
 			n = n[:-4]
 			msg ='\n\n'
@@ -1436,7 +1436,7 @@ class csvscope:
 			self.hold(msg,n,'')
 		return
 	
-	def getTDS3052BTrace(self,ip='',C='ch1',f='temp'):
+	def get_tds3052b_trace(self,ip='',C='ch1',f='temp'):
 		"""
 		Obtém dados de um ou mais canais do osciloscópio TDS3052B via HTTP e salva em CSV.
 		
@@ -1463,7 +1463,7 @@ class csvscope:
 		else:
 			f = f+'.csv'
 		
-		self.checkExistFile(f)
+		self.file_exists(f)
 		
 		df_novo = []
 		for c in C:
@@ -1490,7 +1490,7 @@ class csvscope:
 		df.to_csv(f, index=False)
 		
 	
-	def SetInstrument(self, ip = '',usb='',id=''):
+	def set_instrument(self, ip = '',usb='',id=''):
 		"""
 		Configura conexão com instrumento via PyVISA (TCP/IP, USB ou ID direto).
 		
@@ -1535,7 +1535,7 @@ class csvscope:
 		
 		return idx
 	
-	def GetInstrumentTrace(self,f='TRACE',idx=0,c=1):
+	def get_instrument_trace(self,f='TRACE',idx=0,c=1):
 		"""
 		Obtém dados de um canal do osciloscópio conectado e salva em arquivo CSV.
 		
@@ -1548,7 +1548,7 @@ class csvscope:
 			None: Salva arquivo CSV com nome 'f_CHc.csv' e imprime confirmação.
 		
 		Note:
-			- O instrumento deve ter sido configurado previamente com SetInstrument().
+			- O instrumento deve ter sido configurado previamente com set_instrument().
 			- Os dados são salvos como valores brutos, um por linha.
 		"""
 		# Checa se o canal é válido
@@ -1582,7 +1582,7 @@ class csvscope:
 		print(f"Dados da onda do canal {c} salvos em {nome_arquivo_csv}")
 		
 	
-	def GetInstrumentConfig(self,idx=0,c=1):
+	def get_instrument_config(self,idx=0,c=1):
 		# abre a conexão
 		inst = self.inst[idx]['obj'].open_resource(self.inst[idx]['device'])
 		
@@ -1596,7 +1596,7 @@ class csvscope:
 		print(inst.query(f'CHAN{c}:OFFS?'))
 		
 		
-	def SetInstrumentConfig(self,idx=0,c=1):
+	def set_instrumentConfig(self,idx=0,c=1):
 		"""
 		Configura parâmetros de um canal do osciloscópio conectado.
 		
@@ -1610,7 +1610,7 @@ class csvscope:
 		Note:
 			- Configura escala do canal para 10.
 			- Configura número de pontos para máximo (DMAX).
-			- O instrumento deve ter sido configurado previamente com SetInstrument().
+			- O instrumento deve ter sido configurado previamente com set_instrument().
 		"""
 		# abre a conexão
 		inst = self.inst[idx]['obj'].open_resource(self.inst[idx]['device'])

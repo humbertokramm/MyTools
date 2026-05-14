@@ -94,16 +94,16 @@ class KeysightScope:
 
     def capture_waveform(self, channel):
         print("lendo: ",channel) 
-        ch = self.channel_name(channel)
+        ch = self._channel_name(channel)
         
         # Verifica se o canal está ativo
         disp = int(self.inst.query(f":{ch}:DISP?"))
         if disp == 0:
             raise RuntimeError(f"Canal {channel} não está exibido na tela")
         
-        self.sendData(f":WAV:SOUR {ch}")
-        self.sendData(":WAV:FORM BYTE")
-        self.sendData(":WAV:MODE RAW")
+        self._write(f":WAV:SOUR {ch}")
+        self._write(":WAV:FORM BYTE")
+        self._write(":WAV:MODE RAW")
 
         try:
             xinc = float(self.inst.query(":WAV:XINC?"))
@@ -130,7 +130,7 @@ class KeysightScope:
         }
         return time, voltage, metadata|chset
 
-    def parse_probe_attenuation(self, value):
+    def _parse_probe_attenuation(self, value):
         try:
             attenuation = float(value)
             ratio = Fraction(attenuation).limit_denominator()
@@ -142,7 +142,7 @@ class KeysightScope:
 
     def get_channel_settings(self, channel):
         res = {}
-        channel = self.channel_name(channel)
+        channel = self._channel_name(channel)
         if "CH" in channel:
             res['coupling'] = self.inst.query(f":{channel}:COUPling?").strip()
             probe = self.inst.query(f":{channel}:PROBe?").strip()
@@ -152,9 +152,9 @@ class KeysightScope:
         return res
     
     def capture_screen(self):
-        self.sendData(':SAVE:IMAGe:FORMat PNG')
-        self.sendData(':SAVE:IMAGe:FACTors 1')
-        self.sendData(':HARDcopy:INKSaver OFF')
+        self._write(':SAVE:IMAGe:FORMat PNG')
+        self._write(':SAVE:IMAGe:FACTors 1')
+        self._write(':HARDcopy:INKSaver OFF')
         sleep(4)
 
         image = self.inst.query_binary_values(
@@ -162,10 +162,10 @@ class KeysightScope:
             datatype='B',
             container=bytes
         )
-        self.sendData(f':DISPlay:ANN:TEXT ""')
+        self._write(f':DISPlay:ANN:TEXT ""')
         return image
 
-    def channel_name(self, channel):
+    def _channel_name(self, channel):
         if "MATH" in channel:
             ch = "FUNCtion"
         else:
@@ -174,53 +174,53 @@ class KeysightScope:
 
     def set_channel_settings(self, channel,info):
         now = datetime.now()
-        self.sendData(f":SYSTem:DATE {now.year},{now.month},{now.day}")
-        self.sendData(f":SYSTem:TIME {now.hour},{now.minute},{now.second}")
+        self._write(f":SYSTem:DATE {now.year},{now.month},{now.day}")
+        self._write(f":SYSTem:TIME {now.hour},{now.minute},{now.second}")
         
-        channel = self.channel_name(channel)
+        channel = self._channel_name(channel)
         if info:
             if "label" in info:
                 value = info['label']
-                self.sendData(f':{channel}:LABel "{value}"')
-                self.sendData(f':{channel}:LABel:STATe ON')
-                self.sendData(':DISPlay:LABel ON')
+                self._write(f':{channel}:LABel "{value}"')
+                self._write(f':{channel}:LABel:STATe ON')
+                self._write(':DISPlay:LABel ON')
             if 'cursor' in info:
                 cursor = {k.lower(): v for k, v in info['cursor'].items()} if isinstance(info['cursor'], dict) else {}
-                self.sendData(':MARKer:MODE MANual')
-                if 'y1' in cursor: self.sendData(f':MARKer:Y1P {cursor["y1"]}')
-                if 'y2' in cursor: self.sendData(f':MARKer:Y2P {cursor["y2"]}')
-                if 'x1' in cursor: self.sendData(f':MARKer:X1P {cursor["x1"]}')
-                if 'x2' in cursor: self.sendData(f':MARKer:X2P {cursor["x2"]}')
+                self._write(':MARKer:MODE MANual')
+                if 'y1' in cursor: self._write(f':MARKer:Y1P {cursor["y1"]}')
+                if 'y2' in cursor: self._write(f':MARKer:Y2P {cursor["y2"]}')
+                if 'x1' in cursor: self._write(f':MARKer:X1P {cursor["x1"]}')
+                if 'x2' in cursor: self._write(f':MARKer:X2P {cursor["x2"]}')
             if 'meas' in info and len(info['meas']) > 0:
-                if len(info['meas']) > 0: self.sendData(":MEASure:CLEar")
+                if len(info['meas']) > 0: self._write(":MEASure:CLEar")
                 for v in info['meas']:
-                    v = self.map_measure(v)
+                    v = self._map_measure(v)
                     if v == 'RISetime' or v == 'FALLtime':
                         LOWer = info['threshold']['lower']
                         UPPer = info['threshold']['upper']
-                        self.sendData(f':MEASure:LOWer {LOWer:.6f}')
-                        self.sendData(f':MEASure:UPPer {UPPer:.6f}')
+                        self._write(f':MEASure:LOWer {LOWer:.6f}')
+                        self._write(f':MEASure:UPPer {UPPer:.6f}')
                     
                     if 'FFT' in v:
                         func = re.search(r"\((.*?)\)", v).group(1)
-                        self.sendData(f':FUNCtion1:OPERator FFT')
-                        self.sendData(f':FUNCtion1:SOURce1 {channel}')
-                        self.sendData(f':FUNCtion1:DISPlay ON')
-                        self.sendData(f':MEASure:{func} FUNCtion1')
+                        self._write(f':FUNCtion1:OPERator FFT')
+                        self._write(f':FUNCtion1:SOURce1 {channel}')
+                        self._write(f':FUNCtion1:DISPlay ON')
+                        self._write(f':MEASure:{func} FUNCtion1')
                     else:
-                        self.sendData(f':MEASure:{v} {channel}')
+                        self._write(f':MEASure:{v} {channel}')
             if "text" in info:
-                txt = self.text4DSO(info['text'])
-                self.sendData(f':DISPlay:ANN:STATe ON')
-                self.sendData(f':DISPlay:ANN:TEXT "{txt}"')
-                self.sendData(f':DISPlay:ANN:Y 10')
-                self.sendData(f':DISPlay:ANN:X 10')
+                txt = self._format_dso_text(info['text'])
+                self._write(f':DISPlay:ANN:STATe ON')
+                self._write(f':DISPlay:ANN:TEXT "{txt}"')
+                self._write(f':DISPlay:ANN:Y 10')
+                self._write(f':DISPlay:ANN:X 10')
     
-    def text4DSO(self, txt):
+    def _format_dso_text(self, txt):
         pos = txt.find(" - ")
         return txt.replace(' - ',' '*(31-pos))
     
-    def sendData(self, txt):
+    def _write(self, txt):
         if self.debug:
             self.inst.write('*CLS')
             self.inst.write(txt)
@@ -229,7 +229,7 @@ class KeysightScope:
         else:
             self.inst.write(txt)
     
-    def map_measure(self, meas):
+    def _map_measure(self, meas):
         if meas in MEAS_MAP_KEYSIGHT:
             return MEAS_MAP_KEYSIGHT[meas]
         else: return meas

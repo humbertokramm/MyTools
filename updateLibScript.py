@@ -81,7 +81,7 @@ def check_and_pull(folder):
     return modfi or updat
 
 
-def checar_site(url):
+def check_site(url):
     try:
         # Faz uma requisição HEAD, que é mais leve (pega só os cabeçalhos) e desabilita a verificação SSL
         response = requests.head(url, verify=False, allow_redirects=True)
@@ -95,7 +95,7 @@ def checar_site(url):
         print(f"Erro ao acessar o site: {e}")
         exit()
 
-def listar_arquivos(diretorio):
+def list_files(diretorio):
     """
     Verifica se o diretório existe e imprime os arquivos dentro dele.
     
@@ -117,7 +117,7 @@ def listar_arquivos(diretorio):
                 print("  ", arq)
         return True
 
-def copiar_arquivos(origem, destino, extensoes=None):
+def copy_files(origem, destino, extensoes=None):
     """
     Copia arquivos de 'origem' para 'destino'.
     
@@ -128,8 +128,8 @@ def copiar_arquivos(origem, destino, extensoes=None):
     if not os.path.exists(destino):
         os.makedirs(destino)  # cria se não existir
 
-    if listar_arquivos(destino):
-        dh.Aviso('Os arquivos acima já existem na pasta destino, digite "Y/y" para continuar com a cópia','amarelo')
+    if list_files(destino):
+        dh.print_colored('Files above already exist in destination, type "Y/y" to continue', 'YELLOW')
         a = input()
         if a.lower() != 'y':
             return
@@ -146,7 +146,7 @@ def copiar_arquivos(origem, destino, extensoes=None):
 def main():
 	holdLoop = True
 	while holdLoop:
-		checar_site("https://gerrit.ped.datacom.net.br")
+		check_site("https://gerrit.ped.datacom.net.br")
 		hold = False
 		args = parse_arguments()
 		folders = get_folders(args.f)
