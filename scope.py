@@ -37,7 +37,7 @@ class Scope:
                 self.inst = self.rm.open_resource(resource)
                 break
             except:
-                dh.Aviso(f"Erro na tentativa {tentativa+1} ao conectar em:",'vermelho')
+                dh.print_colored(f"Erro na tentativa {tentativa+1} ao conectar em:",'RED')
                 print(f'RESOURCE = "{resource}"')
                 sleep(2)
                 if tentativa > 1: exit()
@@ -87,7 +87,7 @@ class Scope:
         try: 
             time, voltage, metadata = self.driver.capture_waveform(channel)
         except RuntimeError as e:
-            dh.Aviso(e,'vermelho')
+            dh.print_colored(e,'RED')
             return None, None, None
         
         with open(filename, "w") as f:

@@ -957,7 +957,7 @@ class CsvScope:
 		else: filenames.append(path+t+'.'+out)
 		
 		for filename in filenames:
-			obj.savefig(dh.ajustar_nome_arquivo(filename), bbox_inches='tight', pad_inches=0, transparent=transparent)
+			obj.savefig(dh.sanitize_filename(filename), bbox_inches='tight', pad_inches=0, transparent=transparent)
 
 	def _format_label(self,texto):
 		if texto.startswith("\\"):
