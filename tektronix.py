@@ -51,8 +51,8 @@ MEAS_MAP_TEKTRONIX = {
     # Width
     "PosWidth": "PWIth",
     "NegWidth": "NWIth",
-    "DutyCycle": "PDUTy",
-    "DutyCycle": "NDUTy",
+    "PosDutyCycle": "PDUTy",
+    "NegDutyCycle": "NDUTy",
 
     # Signal quality
     "Overshoot": "POSOver",
