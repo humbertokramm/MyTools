@@ -134,5 +134,5 @@ try:
             "plink", "-serial", serial_port,
             "-sercfg", f"{BAUDRATE},8,n,1,N"
         ])
-except Exception:
+except (Exception, KeyboardInterrupt):
     dh.print_colored("Terminal closed", 'RED')
