@@ -1174,7 +1174,7 @@ class CsvScope:
 				
 				if self.fftylabel == "auto":
 					self.fftylabel = f"Amplitude [{yMeta['unit']}V]"
-					yfator = yMeta['fator']
+					yfator = yMeta['factor']
 				else: 
 					yfator = 1e-6
 					self.fftylabel = "Amplitude [µV]"
