@@ -293,7 +293,7 @@ class CsvScope:
 		dados['data'] = 'None'
 		return df
 
-	def format_h_line(self, y,n='serie',color=False,config=[]):
+	def format_h_line(self, y,n='serie',color=False,config=None):
 		"""
 		Cria uma linha horizontal de referência no gráfico.
 		
@@ -332,7 +332,7 @@ class CsvScope:
 		self.reads.append(dados)
 		return dados
 
-	def format_v_line(self, x,n='serie',color=False,config=[]):
+	def format_v_line(self, x,n='serie',color=False,config=None):
 		"""
 		Cria uma linha vertical de referência no gráfico.
 		
@@ -405,6 +405,7 @@ class CsvScope:
 		else: return False
 
 	def set_data(self, n,config,modo):
+		if config is None: config = {}
 		lx=config['label x'] if 'label x' in config else self.labelx
 		ly=config['label y'] if 'label y' in config else 'Voltage[V]'
 		brd=config['brand'] if 'brand' in config else 'ROHDE'
@@ -451,6 +452,7 @@ class CsvScope:
 		d['y'] = df[df.columns[c]].astype(float)*g*(1/format_eng(ly))+o*(1/format_eng(ly))
 
 	def _handle_cuts(self,df,config):
+		if config is None: config = {}
 		coi=config['cutoff in'] if 'cutoff in' in config else 'nan'
 		coo=config['cutoff out'] if 'cutoff out' in config else 'nan'
 		# Verificar se a coluna 'in s' existe
@@ -461,7 +463,7 @@ class CsvScope:
 		if not coo =='nan': df = df.loc[df['in s'] <= coo]
 		return df
 
-	def load(self, f='TRC01',g=None,o=0,c=1,x=[],y=[],n='nan',color=False,config=[],low_pass=0):
+	def load(self, f='TRC01',g=None,o=0,c=1,x=None,y=None,n='nan',color=False,config=None,low_pass=0):
 		"""
 		Carrega e formata uma série de dados de um arquivo CSV ou dados manuais.
 		
@@ -506,7 +508,7 @@ class CsvScope:
 		if color: dados['color']=color
 		
 		# carrega o dataframe
-		if len(x)==0: df = self.read_file(f,dados)
+		if x is None: df = self.read_file(f,dados)
 		else: df = self.add_manual_table(x,y,dados)
 		
 		# verifica o tamanho

@@ -148,7 +148,7 @@ def lacks_any(string, substrings):
     return all(s not in string for s in substrings)
 
 
-def select_file(rules, exclude=[], msg='Select a file to analyse', directory='local'):
+def select_file(rules, exclude=None, msg='Select a file to analyse', directory='local'):
     """Let the user pick a file from a filtered directory listing.
 
     Args:
@@ -173,6 +173,8 @@ def select_file(rules, exclude=[], msg='Select a file to analyse', directory='lo
         path = os.path.dirname(os.getcwd()) + '\\'
         files = os.listdir(path)
 
+    if exclude is None:
+        exclude = []
     file_list = []
     print("\n")
     for f in files:
@@ -182,7 +184,7 @@ def select_file(rules, exclude=[], msg='Select a file to analyse', directory='lo
     return select_from_list(file_list, msg, path)
 
 
-def select_from_list(file_list=[], msg='Select an option', path=''):
+def select_from_list(file_list=None, msg='Select an option', path=''):
     """Let the user pick from a list ordered newest-first.
 
     Args:
@@ -195,6 +197,8 @@ def select_from_list(file_list=[], msg='Select an option', path=''):
     Returns:
         str or None: ``path + chosen_filename``, or None if no files found.
     """
+    if file_list is None:
+        file_list = []
     if len(file_list) == 0:
         print_colored("\tNo file found\n", 'RED')
         if assert_or_abort("Y") == 'abort':
@@ -243,7 +247,7 @@ def select_from_list(file_list=[], msg='Select an option', path=''):
             return path + file_list[choice]
 
 
-def select_option(options=[], msg='Select an option', path=''):
+def select_option(options=None, msg='Select an option', path=''):
     """Let the user pick from an alphabetically sorted list.
 
     Args:
@@ -256,6 +260,8 @@ def select_option(options=[], msg='Select an option', path=''):
     Returns:
         str or None: ``path + chosen_option``, or None if list is empty.
     """
+    if options is None:
+        options = []
     if len(options) == 0:
         print_colored("\tNo option found\n", 'RED')
         if assert_or_abort("Y") == 'abort':
