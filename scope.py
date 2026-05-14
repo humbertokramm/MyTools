@@ -144,7 +144,7 @@ class Scope:
                 scope.capture_waveform(ch, file)
 
             if screenshot:
-                scope.capture_screen(file,ch,info)
+                scope.capture_screen(file, channel[0], info)
 
         finally:
             scope.close()
