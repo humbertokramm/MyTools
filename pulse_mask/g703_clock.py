@@ -129,7 +129,7 @@ class G703Clock2048kHz(PulseMask):
         # Polygon:  Mascara_Out boundary (left → right) as the FLOOR,
         #           plus ceiling at +vb to close the polygon.
         #
-        # Normalised boundary points (from Excel reference):
+        # Normalised boundary points (from ITU reference):
         #   (-hw,     -v1 )  — mid-negative half-cycle (left edge of window)
         #   (-hT-tol,  0  )  — upper limit rises to 0 at rising-edge start
         #   (-hT-tol, +1.0)  — immediately allows full +Vmax after ZC timing
@@ -163,7 +163,7 @@ class G703Clock2048kHz(PulseMask):
         # Polygon:  floor at -vb (left → right), then Mascara_In boundary
         #           traversed right → left as the CEILING to close.
         #
-        # Normalised boundary points (from Excel reference):
+        # Normalised boundary points (from ITU reference):
         #   (-hw,     -1.0)  — left edge: must be at −Vmax (negative flat)
         #   (-hT+tol, -1.0)  — end of negative flat on the left side
         #   (-hT+tol,  0  )  — rising ZC passes through 0

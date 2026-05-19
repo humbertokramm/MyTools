@@ -1620,7 +1620,7 @@ class CsvScope:
 						sign = 1
 					mask.plot(ax, t_center=c, t_scale=t_scale, v_scale=v_scale,
 							  color='darkorange', sign=sign,
-							  alpha=0.30 if i == 0 else 0.05,
+							  alpha=0.30,# if i == 0 else 0.05,
 							  label=mask_label if i == 0 else None)
 
 				if result and result.violations:

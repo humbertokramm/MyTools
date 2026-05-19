@@ -81,7 +81,7 @@ class G703Data2048kbits(PulseMask):
     _W_MID_IN  = (244e-9 - 25e-9) / 2   # 109.5 ns
     _W_TOP     = (244e-9 - 50e-9) / 2   #  97.0 ns
 
-    # Voltage fractions (normalised by Vnom) — from Excel reference data
+    # Voltage fractions (normalised by Vnom) — from ITU reference data
     # Mascara_Out: transition at 0.50, overshoot limit 1.20 (edge) / 1.10 (center)
     # Mascara_In:  transition at 0.50, flat min 0.90 (center), slope 0.80 (±w_top)
     #              space tolerance ±0.10 at window edges, ±0.20 at transition edge
@@ -122,7 +122,7 @@ class G703Data2048kbits(PulseMask):
         w_mi  = self._W_MID_IN     # 109.5 ns — Mascara_In  transition timing
         w_top = self._W_TOP        #  97.0 ns — Mascara_In  slope timing
 
-        # Normalized voltage levels (from Excel reference, same ratio for all interfaces)
+        # Normalized voltage levels (from ITU reference, same ratio for all interfaces)
         v_sp  = self.Vspace_tol / self.Vnom   # 0.10 — space tolerance
         v_tr  = self._V_TRANS                  # 0.50 — transition boundary
         v_ose = self._V_OS_EDGE                # 1.20 — overshoot limit at edge timing
