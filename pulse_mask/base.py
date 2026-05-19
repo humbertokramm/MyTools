@@ -201,6 +201,7 @@ class PulseMask:
         color:    str   = 'red',
         alpha:    float = 0.25,
         label:    str   = None,
+        sign:     int   = 1,
     ) -> None:
         """Overlay forbidden zones on an existing matplotlib axis.
 
@@ -222,11 +223,14 @@ class PulseMask:
                 Default ``0.25``.
             label    (str, optional): Legend label attached to the first zone
                 only (avoids duplicate legend entries). Default ``None``.
+            sign     (int): +1 (default) for positive pulse, -1 to mirror the
+                mask vertically for a negative pulse.
         """
         for i, zone in enumerate(self.forbidden_zones):
-            # Denormalise to physical units, then convert to display units
+            # Denormalise to physical units, then convert to display units.
+            # sign=-1 flips the voltage axis to overlay the mask on a negative pulse.
             t_disp = (zone[:, 0] + t_center) / t_scale
-            v_disp = (zone[:, 1] * self.Vnom)  / v_scale
+            v_disp = (sign * zone[:, 1] * self.Vnom) / v_scale
 
             ax.fill(
                 t_disp, v_disp,

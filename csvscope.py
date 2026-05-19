@@ -77,7 +77,7 @@ import re
 from sklearn.cluster import KMeans
 from pathlib import Path
 from engMath import *
-from pulse_mask import G703Clock2048kHz
+from pulse_mask import G703Clock2048kHz, G703Data2048kbits
 
 
 class CsvScope:
@@ -1431,100 +1431,153 @@ class CsvScope:
 			self.hold(msg,n,'')
 		return
 	
-	def plot_mask(self, s='Signal Name',mode="T12",interface='symmetrical',size=(14, 5),out='png',path='',transparent=False):
+	def plot_mask(self, s='Signal Name',mode="T12",interface='coaxial',size=(14, 5),out='png',path='',transparent=False):
 		for d in self.reads:
 			if s == d["name"]:
-				
-				# --- Scale factors from the loaded dict --------------------------------
-				t_scale = d['engNoteX']   # display unit → seconds  (e.g. 1e-9 for ns)
-				v_scale = d['engNoteY']   # display unit → volts
-				x_unit  = d['labelx'][d['labelx'].find('[')+1 : d['labelx'].find(']')]
-				y_unit  = d['labely'][d['labely'].find('[')+1 : d['labely'].find(']')]
 
-				# Physical arrays used for validation (seconds, volts)
-				time_s	= d['x'].to_numpy() * t_scale
+				# --- Scale factors -------------------------------------------------
+				t_scale   = d['engNoteX']
+				v_scale   = d['engNoteY']
+				x_unit    = d['labelx'][d['labelx'].find('[')+1 : d['labelx'].find(']')]
+				y_unit    = d['labely'][d['labely'].find('[')+1 : d['labely'].find(']')]
+				time_s    = d['x'].to_numpy() * t_scale
 				voltage_v = d['y'].to_numpy() * v_scale
 
 				print(f"\nSignal: {len(time_s)} samples")
 				print(f"  Vmax = {voltage_v.max():.3f} {y_unit}   Vmin = {voltage_v.min():.3f} {y_unit}")
 				print(f"  Duration = {d['x'].iloc[-1] - d['x'].iloc[0]:.3f} {x_unit}")
 
+				# --- Mode: T12 — 2048 kHz clock (G.703 Section 15) ----------------
 				if mode == "T12":
-					# --- Mask instance -----------------------------------------------------
-					mask = G703Clock2048kHz(interface=interface)
+					mask  = G703Clock2048kHz(interface=interface)
+					title = f'G.703 T12 — 2048 kHz Clock Mask ({interface}) — {s}'
+					mask_label = 'G703 T12 forbidden'
 
-					# --- Falling zero crossing detection ----------------------------------
-					# The G.703 clock mask is referenced to the falling zero crossing (the
-					# moment the signal transitions from +V toward −V).  Each such crossing
-					# is one analysis center.
-					#
-					# Detection: find consecutive samples where the sign changes from
-					# positive to negative, then linearly interpolate the exact crossing.
-					# A minimum-separation guard (≈ T/2) removes spurious crossings that
-					# can arise from noise near zero.
-
-					sign		= np.sign(voltage_v)
-					fall_idx	= np.where((sign[:-1] >= 0) & (sign[1:] < 0))[0]
-
+					# Falling zero crossing detection (interpolated, min-sep filtered)
+					sign     = np.sign(voltage_v)
+					fall_idx = np.where((sign[:-1] >= 0) & (sign[1:] < 0))[0]
 					centers_raw = []
 					for i in fall_idx:
-						v0, v1_s = voltage_v[i], voltage_v[i + 1]
-						t0, t1_s = time_s[i],	time_s[i + 1]
-						# linear interpolation to sub-sample accuracy
-						t_cross = t0 + (-v0 / (v1_s - v0)) * (t1_s - t0)
-						centers_raw.append(float(t_cross))
-
-					# Keep only crossings separated by at least 0.8 × T/2
+						v0, v1s = voltage_v[i], voltage_v[i+1]
+						t0, t1s = time_s[i],    time_s[i+1]
+						centers_raw.append(float(t0 + (-v0 / (v1s - v0)) * (t1s - t0)))
 					min_sep = mask.T * 0.8 / 2
 					centers = []
 					for tc in centers_raw:
 						if not centers or (tc - centers[-1]) > min_sep:
 							centers.append(tc)
+					print(f"\n  Falling zero crossings: {len(centers)}")
 
-					print(f"\nFalling zero crossings found: {len(centers)}")
-					if centers:
-						print(f"  First 5: {[f'{c/t_scale:.3f} {x_unit}' for c in centers[:5]]}")
+				# --- Mode: E12 — 2048 kbit/s HDB3 data (G.703 Section 11) ---------
+				elif mode == "E12":
+					mask  = G703Data2048kbits(interface=interface)
+					title = f'G.703 E12 — 2048 kbit/s HDB3 Mask ({interface}) — {s}'
+					mask_label = 'G703 E12 forbidden'
 
-					# --- Validate ----------------------------------------------------------
-					if centers:
-						result = mask.validate(time_s, voltage_v, centers)
-						print(f"\nG703 Clock 2048 kHz : {result}")
+					# Pulse center detection: edge-based midpoint method.
+					# For each polarity, find the threshold crossing at the leading
+					# and trailing edges of every mark pulse, then take the midpoint.
+					# Threshold at 40 % of |Vpeak| — enough to ignore noise / space.
+					vmax_abs  = np.max(np.abs(voltage_v))
+					thr       = 0.4 * vmax_abs
+
+					# ---- interpolated threshold crossings -----------------------
+					pos_rise, pos_fall = [], []   # +thr crossings
+					neg_fall, neg_rise = [], []   # -thr crossings
+
+					v, t = voltage_v, time_s
+					for i in range(len(v) - 1):
+						# positive rising  (below to above +thr)
+						if v[i] < thr <= v[i + 1]:
+							frac = (thr - v[i]) / (v[i + 1] - v[i])
+							pos_rise.append(t[i] + frac * (t[i + 1] - t[i]))
+						# positive falling (above to below +thr)
+						elif v[i] >= thr > v[i + 1]:
+							frac = (thr - v[i]) / (v[i + 1] - v[i])
+							pos_fall.append(t[i] + frac * (t[i + 1] - t[i]))
+						# negative falling (above to below -thr)
+						if v[i] > -thr >= v[i + 1]:
+							frac = (-thr - v[i]) / (v[i + 1] - v[i])
+							neg_fall.append(t[i] + frac * (t[i + 1] - t[i]))
+						# negative rising  (below to above -thr)
+						elif v[i] <= -thr < v[i + 1]:
+							frac = (-thr - v[i]) / (v[i + 1] - v[i])
+							neg_rise.append(t[i] + frac * (t[i + 1] - t[i]))
+
+					# ---- pair crossings: each rise with its next fall ------------
+					centers = []
+					fi = 0
+					for tr in pos_rise:                       # positive pulses
+						while fi < len(pos_fall) and pos_fall[fi] <= tr:
+							fi += 1
+						if fi < len(pos_fall):
+							centers.append((tr + pos_fall[fi]) / 2)
+							fi += 1
+
+					ri = 0
+					for tf in neg_fall:                       # negative pulses
+						while ri < len(neg_rise) and neg_rise[ri] <= tf:
+							ri += 1
+						if ri < len(neg_rise):
+							centers.append((tf + neg_rise[ri]) / 2)
+							ri += 1
+
+					# ---- sort and apply minimum-separation guard -----------------
+					centers.sort()
+					min_sep  = mask.T * 0.5
+					filtered = []
+					for c in centers:
+						if not filtered or (c - filtered[-1]) > min_sep:
+							filtered.append(c)
+					centers = filtered
+					print(f"\n  Mark pulse centers found: {len(centers)}")
+
+				else:
+					print(f"  [plot_mask] Unknown mode '{mode}'. Supported: T12, E12.")
+					return
+
+				if centers:
+					print(f"  First 5: {[f'{c/t_scale:.3f} {x_unit}' for c in centers[:5]]}")
+
+				# --- Validate ------------------------------------------------------
+				if centers:
+					result = mask.validate(time_s, voltage_v, centers)
+					print(f"  {result}")
+				else:
+					print("  No centers detected — check signal amplitude or mask.T.")
+					result = None
+
+				# --- Plot ----------------------------------------------------------
+				fig, ax = plt.subplots(figsize=size)
+				ax.plot(d['x'].to_numpy(), d['y'].to_numpy(),
+						color='steelblue', lw=0.8, label='Signal')
+
+				half = mask._half_window
+				for i, c in enumerate(centers):
+					# Determine pulse polarity to orient the mask correctly
+					idx = (time_s >= c - half) & (time_s <= c + half)
+					if np.any(idx):
+						peak = voltage_v[idx][np.argmax(np.abs(voltage_v[idx]))]
+						sign = -1 if peak < 0 else 1
 					else:
-						print("\nNo half-cycle centers detected — check signal amplitude or mask.T.")
-						result = None
+						sign = 1
+					mask.plot(ax, t_center=c, t_scale=t_scale, v_scale=v_scale,
+							  color='darkorange', sign=sign,
+							  alpha=0.30 if i == 0 else 0.05,
+							  label=mask_label if i == 0 else None)
 
-					# --- Plot --------------------------------------------------------------
-					fig, ax = plt.subplots(figsize=size)
+				if result and result.violations:
+					vt = [v.time    / t_scale for v in result.violations[:500]]
+					vv = [v.voltage / v_scale for v in result.violations[:500]]
+					ax.plot(vt, vv, 'rx', ms=4, label=f'Violations ({result.violation_count})')
 
-					ax.plot(d['x'].to_numpy(), d['y'].to_numpy(),
-							color='steelblue', lw=0.8, label='Signal')
-
-					# Overlay mask at every detected half-cycle
-					# First one: filled (shape reference); the rest: very faint
-					for i, c in enumerate(centers):
-						mask.plot(
-							ax, t_center=c, t_scale=t_scale, v_scale=v_scale,
-							color='darkorange',
-							alpha=0.30 if i == 0 else 0.05,
-							label='G703 Clock forbidden' if i == 0 else None,
-						)
-
-					# Violations
-					if result and result.violations:
-						vt = [v.time	/ t_scale for v in result.violations[:500]]
-						vv = [v.voltage / v_scale for v in result.violations[:500]]
-						ax.plot(vt, vv, 'rx', ms=4, label=f'Violations ({result.violation_count})')
-
-					ax.axhline(0, color='gray', lw=0.5, ls='--')   # y=0 reference
-					ax.set_xlabel(d['labelx'])
-					ax.set_ylabel(d['labely'])
-					ax.set_title(f'G.703 Clock 2048 kHz Mask Test — {s}\n{result}')
-				
+				ax.axhline(0, color='gray', lw=0.5, ls='--')
+				ax.set_xlabel(d['labelx'])
+				ax.set_ylabel(d['labely'])
+				ax.set_title(f'{title}\n{result}')
 				ax.legend(fontsize=8)
 				ax.grid(True, alpha=0.3)
 				plt.tight_layout()
-				
-				# Salva a figura
-				self.save_figure(plt,out,path,s,transparent)
-				# Exibindo a figura
+
+				self.save_figure(plt, out, path, s, transparent)
 				plt.show(block=False)
