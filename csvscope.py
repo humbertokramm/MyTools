@@ -2,45 +2,45 @@
 **File: csvscope.py**
 
 **Descrição**
-    Classe para processamento e visualização de dados de osciloscópios e instrumentos de medição.
-    Suporta múltiplos formatos (ROHDE, Tektronix, Master Tool) com análises avançadas.
+	Classe para processamento e visualização de dados de osciloscópios e instrumentos de medição.
+	Suporta múltiplos formatos (ROHDE, Tektronix, Master Tool) com análises avançadas.
 
 **Classe Principal**
 
 ``class CsvScope``
-    
-    Processa sinais de osciloscópios com suporte para:
-    - Múltiplos formatos de arquivo CSV
-    - Análise FFT
-    - Diagramas de olho PAM
-    - Anotações automáticas
-    - Conexão com instrumentos via PyVISA
-    
-    **Atributos**
-    
-    - ``reads``: Lista de séries de dados carregadas
-    - ``title``: Título das leituras
-    - ``indexNote``: Contador para anotações automáticas
-    - ``path``: Caminho para salvar arquivos
-    - ``yDf``: DataFrame com informações de eixos Y
-    - ``inst``: Lista de instrumentos conectados
-    
-    **Métodos Principais**
-    
-    ``__init__(title='Minhas Leituras', path='')``
-        Inicializa uma instância da classe csvscope.
-    
-    ``format_eng(nota, s=False)``
-        Extrai notação de engenharia de labels.
-        
-        :param nota: String com notação entre colchetes
-        :type nota: str
-        :param s: Modo de retorno (False/True/'symbol')
-        :type s: bool or str
-        :return: Fator numérico, string com notação ou símbolo
-        
-    ``__str__()``
-        Retorna o título das leituras.
+	
+	Processa sinais de osciloscópios com suporte para:
+	- Múltiplos formatos de arquivo CSV
+	- Análise FFT
+	- Diagramas de olho PAM
+	- Anotações automáticas
+	- Conexão com instrumentos via PyVISA
+	
+	**Atributos**
+	
+	- ``reads``: Lista de séries de dados carregadas
+	- ``title``: Título das leituras
+	- ``indexNote``: Contador para anotações automáticas
+	- ``path``: Caminho para salvar arquivos
+	- ``yDf``: DataFrame com informações de eixos Y
+	- ``inst``: Lista de instrumentos conectados
+	
+	**Métodos Principais**
+	
+	``__init__(title='Minhas Leituras', path='')``
+		Inicializa uma instância da classe csvscope.
+	
+	``format_eng(nota, s=False)``
+		Extrai notação de engenharia de labels.
+		
+		:param nota: String com notação entre colchetes
+		:type nota: str
+		:param s: Modo de retorno (False/True/'symbol')
+		:type s: bool or str
+		:return: Fator numérico, string com notação ou símbolo
+		
+	``__str__()``
+		Retorna o título das leituras.
 
 **Constantes**
 
@@ -49,12 +49,12 @@
 ``Symbol`` (list): Lista de símbolos de unidades (V, W, A, Ω, s, Hz)
 
 **Dependências**
-    - pandas
-    - matplotlib
-    - numpy
-    - scipy
-    - sklearn
-    - dirHandle
+	- pandas
+	- matplotlib
+	- numpy
+	- scipy
+	- sklearn
+	- dirHandle
 
 See: docs/guia_documentacao.rst
 """
@@ -77,7 +77,7 @@ import re
 from sklearn.cluster import KMeans
 from pathlib import Path
 from engMath import *
-
+from pulse_mask import G703Clock2048kHz
 
 
 class CsvScope:
@@ -1267,12 +1267,12 @@ class CsvScope:
 		mode = mode.upper()
 
 		presets = {
-				"10BASE-T":     {"bitrate": 10_000_000,    "num_levels": 2, "symbols_per_eye": 3},
+				"10BASE-T":	 {"bitrate": 10_000_000,	"num_levels": 2, "symbols_per_eye": 3},
 				"100BASE-TX":   {"bitrate": 100_000_000,   "num_levels": 3, "symbols_per_eye": 3},
 				"1000BASE-T":   {"bitrate": 1_000_000_000, "num_levels": 5, "symbols_per_eye": 3},
 				"2.5GBASE-T":   {"bitrate": 2_500_000_000, "num_levels": 5, "symbols_per_eye": 2},
-				"5GBASE-T":     {"bitrate": 5_000_000_000, "num_levels": 5, "symbols_per_eye": 2},
-				"10GBASE-T":    {"bitrate": 10_000_000_000,"num_levels": 16,"symbols_per_eye": 2}
+				"5GBASE-T":	 {"bitrate": 5_000_000_000, "num_levels": 5, "symbols_per_eye": 2},
+				"10GBASE-T":	{"bitrate": 10_000_000_000,"num_levels": 16,"symbols_per_eye": 2}
 		}
 
 		if mode not in presets:
@@ -1431,3 +1431,100 @@ class CsvScope:
 			self.hold(msg,n,'')
 		return
 	
+	def plot_mask(self, s='Signal Name',mode="T12",interface='symmetrical',size=(14, 5),out='png',path='',transparent=False):
+		for d in self.reads:
+			if s == d["name"]:
+				
+				# --- Scale factors from the loaded dict --------------------------------
+				t_scale = d['engNoteX']   # display unit → seconds  (e.g. 1e-9 for ns)
+				v_scale = d['engNoteY']   # display unit → volts
+				x_unit  = d['labelx'][d['labelx'].find('[')+1 : d['labelx'].find(']')]
+				y_unit  = d['labely'][d['labely'].find('[')+1 : d['labely'].find(']')]
+
+				# Physical arrays used for validation (seconds, volts)
+				time_s	= d['x'].to_numpy() * t_scale
+				voltage_v = d['y'].to_numpy() * v_scale
+
+				print(f"\nSignal: {len(time_s)} samples")
+				print(f"  Vmax = {voltage_v.max():.3f} {y_unit}   Vmin = {voltage_v.min():.3f} {y_unit}")
+				print(f"  Duration = {d['x'].iloc[-1] - d['x'].iloc[0]:.3f} {x_unit}")
+
+				if mode == "T12":
+					# --- Mask instance -----------------------------------------------------
+					mask = G703Clock2048kHz(interface=interface)
+
+					# --- Falling zero crossing detection ----------------------------------
+					# The G.703 clock mask is referenced to the falling zero crossing (the
+					# moment the signal transitions from +V toward −V).  Each such crossing
+					# is one analysis center.
+					#
+					# Detection: find consecutive samples where the sign changes from
+					# positive to negative, then linearly interpolate the exact crossing.
+					# A minimum-separation guard (≈ T/2) removes spurious crossings that
+					# can arise from noise near zero.
+
+					sign		= np.sign(voltage_v)
+					fall_idx	= np.where((sign[:-1] >= 0) & (sign[1:] < 0))[0]
+
+					centers_raw = []
+					for i in fall_idx:
+						v0, v1_s = voltage_v[i], voltage_v[i + 1]
+						t0, t1_s = time_s[i],	time_s[i + 1]
+						# linear interpolation to sub-sample accuracy
+						t_cross = t0 + (-v0 / (v1_s - v0)) * (t1_s - t0)
+						centers_raw.append(float(t_cross))
+
+					# Keep only crossings separated by at least 0.8 × T/2
+					min_sep = mask.T * 0.8 / 2
+					centers = []
+					for tc in centers_raw:
+						if not centers or (tc - centers[-1]) > min_sep:
+							centers.append(tc)
+
+					print(f"\nFalling zero crossings found: {len(centers)}")
+					if centers:
+						print(f"  First 5: {[f'{c/t_scale:.3f} {x_unit}' for c in centers[:5]]}")
+
+					# --- Validate ----------------------------------------------------------
+					if centers:
+						result = mask.validate(time_s, voltage_v, centers)
+						print(f"\nG703 Clock 2048 kHz : {result}")
+					else:
+						print("\nNo half-cycle centers detected — check signal amplitude or mask.T.")
+						result = None
+
+					# --- Plot --------------------------------------------------------------
+					fig, ax = plt.subplots(figsize=size)
+
+					ax.plot(d['x'].to_numpy(), d['y'].to_numpy(),
+							color='steelblue', lw=0.8, label='Signal')
+
+					# Overlay mask at every detected half-cycle
+					# First one: filled (shape reference); the rest: very faint
+					for i, c in enumerate(centers):
+						mask.plot(
+							ax, t_center=c, t_scale=t_scale, v_scale=v_scale,
+							color='darkorange',
+							alpha=0.30 if i == 0 else 0.05,
+							label='G703 Clock forbidden' if i == 0 else None,
+						)
+
+					# Violations
+					if result and result.violations:
+						vt = [v.time	/ t_scale for v in result.violations[:500]]
+						vv = [v.voltage / v_scale for v in result.violations[:500]]
+						ax.plot(vt, vv, 'rx', ms=4, label=f'Violations ({result.violation_count})')
+
+					ax.axhline(0, color='gray', lw=0.5, ls='--')   # y=0 reference
+					ax.set_xlabel(d['labelx'])
+					ax.set_ylabel(d['labely'])
+					ax.set_title(f'G.703 Clock 2048 kHz Mask Test — {s}\n{result}')
+				
+				ax.legend(fontsize=8)
+				ax.grid(True, alpha=0.3)
+				plt.tight_layout()
+				
+				# Salva a figura
+				self.save_figure(plt,out,path,s,transparent)
+				# Exibindo a figura
+				plt.show(block=False)

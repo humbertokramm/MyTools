@@ -151,7 +151,7 @@ class Scope:
     # ---------------------------------------------------------
 
     @staticmethod
-    def main(file, resource, channel="CH1", screenshot=True, info=False, debug=False, overwrite=False):
+    def main(file, resource=None, channel="CH1", screenshot=True, info=False, debug=False, overwrite=False):
         scope = Scope(resource, debug, overwrite)
 
         if isinstance(channel, str):
