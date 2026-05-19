@@ -1431,6 +1431,57 @@ class CsvScope:
 			self.hold(msg,n,'')
 		return
 	
+	@staticmethod
+	def _grid_recover(detected, period, t_min, t_max, marks_only=False):
+		"""Snap detected centers to a phase-locked grid.
+		
+		Estimates the grid phase robustly via a circular mean of
+		(t mod period) across all candidates, then generates the full
+		integer-period grid anchored to that phase.
+		
+		Args:
+		    detected   (list[float]): Raw detected center timestamps (s).
+		    period     (float): Expected period (s).
+		    t_min      (float): Signal start time (s).
+		    t_max      (float): Signal end time (s).
+		    marks_only (bool): True  → keep only grid points near a
+		        detected candidate (data signal with spaces, e.g. E12).
+		        False → return the full grid (clock signal, e.g. T12).
+		
+		Returns:
+		    list[float]: Phase-locked center timestamps.
+		"""
+		if not detected:
+			return []
+		
+		arr = np.array(detected)
+		
+		# Circular mean of (t mod period) for a robust phase estimate
+		# that is immune to missing/extra detections.
+		phases     = arr % period
+		angles     = 2 * np.pi * phases / period
+		mean_angle = np.arctan2(np.mean(np.sin(angles)), np.mean(np.cos(angles)))
+		mean_phase = (mean_angle / (2 * np.pi)) * period
+		if mean_phase < 0:
+			mean_phase += period
+		
+		# First grid point at or after t_min that carries the recovered phase
+		n_start = int(np.ceil((t_min - mean_phase) / period))
+		t_ref   = mean_phase + n_start * period
+		
+		# Full grid within signal range
+		n_end = int(np.ceil((t_max - t_ref) / period)) + 1
+		grid  = [t_ref + n * period for n in range(n_end)
+			if t_ref + n * period <= t_max + period * 0.01]
+		
+		if not marks_only:
+			return grid
+		
+		# marks_only: keep grid points that have a nearby raw detection
+		# (marks present) and discard unoccupied bit slots (spaces).
+		half_T = period * 0.45
+		return [g for g in grid if any(abs(g - d) < half_T for d in arr)]
+	
 	def plot_mask(self, s='Signal Name',mode="T12",interface='coaxial',size=(14, 5),out='png',path='',transparent=False):
 		for d in self.reads:
 			if s == d["name"]:
@@ -1466,7 +1517,10 @@ class CsvScope:
 					for tc in centers_raw:
 						if not centers or (tc - centers[-1]) > min_sep:
 							centers.append(tc)
-					print(f"\n  Falling zero crossings: {len(centers)}")
+					n_raw   = len(centers)
+					centers = CsvScope._grid_recover(
+						centers, mask.T, time_s[0], time_s[-1], marks_only=False)
+					print(f"\n  Falling zero crossings: {n_raw} detected → {len(centers)} grid-locked")
 
 				# --- Mode: E12 — 2048 kbit/s HDB3 data (G.703 Section 11) ---------
 				elif mode == "E12":
@@ -1530,7 +1584,10 @@ class CsvScope:
 						if not filtered or (c - filtered[-1]) > min_sep:
 							filtered.append(c)
 					centers = filtered
-					print(f"\n  Mark pulse centers found: {len(centers)}")
+					n_raw   = len(centers)
+					centers = CsvScope._grid_recover(
+						centers, mask.T, time_s[0], time_s[-1], marks_only=True)
+					print(f"\n  Mark pulse centers: {n_raw} detected → {len(centers)} grid-locked")
 
 				else:
 					print(f"  [plot_mask] Unknown mode '{mode}'. Supported: T12, E12.")
