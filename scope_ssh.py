@@ -239,6 +239,45 @@ inst.close()
 rm.close()
 '''
 
+_WAIT_TEMPLATE = r'''
+import json, sys, time
+import pyvisa
+
+rm = pyvisa.ResourceManager()
+
+if _resource == 'auto':
+    resources = rm.list_resources()
+    candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
+    if not candidates:
+        print(json.dumps({'error': 'no instrument found'}))
+        sys.exit(1)
+    _resource = candidates[0]
+
+inst = rm.open_resource(_resource)
+inst.timeout = 5000
+idn = inst.query('*IDN?').strip().upper()
+
+elapsed = 0.0
+done    = False
+
+while elapsed < _timeout:
+    if 'TEKTRONIX' in idn:
+        if inst.query('ACQuire:STATE?').strip() == '0':
+            done = True
+            break
+    elif 'KEYSIGHT' in idn or 'AGILENT' in idn:
+        cond = int(inst.query(':OPERegister:CONDition?').strip())
+        if cond & 8 == 0:
+            done = True
+            break
+    time.sleep(_interval)
+    elapsed += _interval
+
+inst.close()
+rm.close()
+print(json.dumps({'triggered': done, 'elapsed': round(elapsed, 2)}))
+'''
+
 _SCPI_TEMPLATE = r'''
 import json, sys
 import pyvisa
@@ -467,6 +506,28 @@ class SshScope:
             return None
 
         return base64.b64decode(png_b64)
+
+    def wait_single(self, timeout=30, interval=0.5):
+        """Block until a single acquisition completes on the remote scope.
+
+        Runs a polling loop remotely (single SSH round-trip) to avoid
+        per-tick SSH overhead.
+
+        Args:
+            timeout  (float): Maximum seconds to wait. Default 30.
+            interval (float): Polling interval in seconds. Default 0.5.
+
+        Returns:
+            bool: ``True`` if acquisition completed, ``False`` if timed out.
+        """
+        script = self._build_script(
+            _WAIT_TEMPLATE,
+            resource = self.visa_resource,
+            timeout  = timeout,
+            interval = interval,
+        )
+        result = self._run_script(script)
+        return result.get('triggered', False)
 
     def single(self):
         """Arm the remote oscilloscope for a single triggered acquisition."""

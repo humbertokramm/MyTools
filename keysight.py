@@ -225,6 +225,29 @@ class KeysightScope:
         """Arm the oscilloscope for a single triggered acquisition."""
         self._write(':SINGle')
 
+    def wait_single(self, timeout=30, interval=0.5):
+        """Block until a single acquisition completes or *timeout* expires.
+
+        Polls ``:OPERegister:CONDition?`` bit 3 (Measuring). When the bit
+        clears the acquisition has finished.
+
+        Args:
+            timeout  (float): Maximum seconds to wait. Default 30.
+            interval (float): Polling interval in seconds. Default 0.5.
+
+        Returns:
+            bool: ``True`` if acquisition completed, ``False`` if timed out.
+        """
+        from time import sleep
+        elapsed = 0
+        while elapsed < timeout:
+            cond = int(self.inst.query(':OPERegister:CONDition?').strip())
+            if cond & 8 == 0:
+                return True
+            sleep(interval)
+            elapsed += interval
+        return False
+
     def stop(self):
         """Stop the current acquisition."""
         self._write(':STOP')

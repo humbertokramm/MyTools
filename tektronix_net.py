@@ -155,6 +155,12 @@ class TektronixNetScope:
         if self.debug:
             print("single: not supported over HTTP")
 
+    def wait_single(self, timeout=30, interval=0.5):
+        """Not supported over HTTP — returns False immediately."""
+        if self.debug:
+            print("wait_single: not supported over HTTP")
+        return False
+
     def stop(self):
         """No-op: trigger control not supported over HTTP."""
         if self.debug:

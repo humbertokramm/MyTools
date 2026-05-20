@@ -235,6 +235,24 @@ class TektronixScope:
         self._write('ACQuire:STOPAfter SEQuence')
         self._write('ACQuire:STATE RUN')
 
+    def wait_single(self, timeout=30, interval=0.5):
+        """Block until a single acquisition completes or *timeout* expires.
+
+        Args:
+            timeout  (float): Maximum seconds to wait. Default 30.
+            interval (float): Polling interval in seconds. Default 0.5.
+
+        Returns:
+            bool: ``True`` if acquisition completed, ``False`` if timed out.
+        """
+        elapsed = 0
+        while elapsed < timeout:
+            if self.inst.query('ACQuire:STATE?').strip() == '0':
+                return True
+            time.sleep(interval)
+            elapsed += interval
+        return False
+
     def stop(self):
         """Stop the current acquisition."""
         self._write('ACQuire:STATE STOP')

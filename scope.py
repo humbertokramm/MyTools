@@ -154,6 +154,18 @@ class Scope:
         """Arm the oscilloscope for a single triggered acquisition."""
         self.driver.single()
 
+    def wait_single(self, timeout=30, interval=0.5):
+        """Block until a single acquisition completes or *timeout* expires.
+
+        Args:
+            timeout  (float): Maximum seconds to wait. Default 30.
+            interval (float): Polling interval in seconds. Default 0.5.
+
+        Returns:
+            bool: ``True`` if acquisition completed, ``False`` if timed out.
+        """
+        return self.driver.wait_single(timeout=timeout, interval=interval)
+
     def stop(self):
         """Stop the current acquisition."""
         self.driver.stop()
