@@ -260,11 +260,11 @@ class KeysightScope:
         from time import sleep
         elapsed = 0
         while elapsed < timeout:
+            sleep(interval)
+            elapsed += interval
             cond = int(self.inst.query(':OPERegister:CONDition?').strip())
             if cond & 8 == 0:
                 return True
-            sleep(interval)
-            elapsed += interval
         return False
 
     def stop(self):

@@ -266,6 +266,7 @@ _MONITOR_TEMPLATE = r'''
 import json, sys, time
 import pyvisa
 
+
 rm = pyvisa.ResourceManager()
 
 def _open_inst(rm, resource, timeout=5000):
@@ -310,11 +311,11 @@ try:
     while elapsed_total < _max_wait:
         elapsed = 0.0
         while elapsed < _retry_timeout:
+            time.sleep(_interval)
+            elapsed += _interval
             if _is_done(inst, idn):
                 done = True
                 break
-            time.sleep(_interval)
-            elapsed += _interval
         if done:
             break
         elapsed_total += elapsed
@@ -358,6 +359,8 @@ done    = False
 
 try:
     while elapsed < _timeout:
+        time.sleep(_interval)
+        elapsed += _interval
         if 'TEKTRONIX' in idn:
             if inst.query('ACQuire:STATE?').strip() == '0':
                 done = True
@@ -367,8 +370,6 @@ try:
             if cond & 8 == 0:
                 done = True
                 break
-        time.sleep(_interval)
-        elapsed += _interval
 finally:
     inst.close()
     rm.close()
@@ -519,8 +520,14 @@ class SshScope:
         stdin.write(script.encode())
         stdin.channel.shutdown_write()
 
-        out = stdout.read().decode().strip()
-        err = stderr.read().decode().strip()
+        try:
+            out = stdout.read().decode().strip()
+            err = stderr.read().decode().strip()
+        except KeyboardInterrupt:
+            # Ctrl+C: close the channel so the remote script gets stdin EOF
+            # and exits cleanly (releasing the USB device).
+            stdout.channel.close()
+            raise
 
         if self.debug and err:
             print(f"[SSH remote stderr]\n{err}")

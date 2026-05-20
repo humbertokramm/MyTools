@@ -266,10 +266,10 @@ class TektronixScope:
         """
         elapsed = 0
         while elapsed < timeout:
-            if self.inst.query('ACQuire:STATE?').strip() == '0':
-                return True
             time.sleep(interval)
             elapsed += interval
+            if self.inst.query('ACQuire:STATE?').strip() == '0':
+                return True
         return False
 
     def stop(self):
