@@ -148,6 +148,17 @@ class Scope:
         print("Screenshot saved:", filename)
 
     # ---------------------------------------------------------
+    # trigger control
+    # ---------------------------------------------------------
+    def single(self):
+        """Arm the oscilloscope for a single triggered acquisition."""
+        self.driver.single()
+
+    def stop(self):
+        """Stop the current acquisition."""
+        self.driver.stop()
+
+    # ---------------------------------------------------------
     # connection
     # ---------------------------------------------------------
     def close(self):

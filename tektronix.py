@@ -229,6 +229,17 @@ class TektronixScope:
             self._write(f':MESSAGE:SHOW "{value}"')
             time.sleep(delay)
                 
+    # ---------------------------------------------------------
+    def single(self):
+        """Arm the oscilloscope for a single triggered acquisition."""
+        self._write('ACQuire:STOPAfter SEQuence')
+        self._write('ACQuire:STATE RUN')
+
+    def stop(self):
+        """Stop the current acquisition."""
+        self._write('ACQuire:STATE STOP')
+
+    # ---------------------------------------------------------
     def _write(self, txt):
         if self.debug:
             self.inst.write('*CLS')

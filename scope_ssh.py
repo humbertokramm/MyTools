@@ -239,6 +239,38 @@ inst.close()
 rm.close()
 '''
 
+_SCPI_TEMPLATE = r'''
+import json, sys
+import pyvisa
+
+rm = pyvisa.ResourceManager()
+
+if _resource == 'auto':
+    resources = rm.list_resources()
+    candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
+    if not candidates:
+        print(json.dumps({'error': 'no instrument found'}))
+        sys.exit(1)
+    _resource = candidates[0]
+
+inst = rm.open_resource(_resource)
+inst.timeout = 10000
+idn = inst.query('*IDN?').strip().upper()
+
+commands = []
+for brand, cmds in _commands.items():
+    if brand.upper() in idn:
+        commands = cmds
+        break
+
+for cmd in commands:
+    inst.write(cmd)
+
+inst.close()
+rm.close()
+print(json.dumps({'ok': True}))
+'''
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Driver class
@@ -435,6 +467,32 @@ class SshScope:
             return None
 
         return base64.b64decode(png_b64)
+
+    def single(self):
+        """Arm the remote oscilloscope for a single triggered acquisition."""
+        script = self._build_script(
+            _SCPI_TEMPLATE,
+            resource = self.visa_resource,
+            commands = {
+                'TEKTRONIX': ['ACQuire:STOPAfter SEQuence', 'ACQuire:STATE RUN'],
+                'KEYSIGHT':  [':SINGle'],
+                'AGILENT':   [':SINGle'],
+            },
+        )
+        self._run_script(script)
+
+    def stop(self):
+        """Stop the current acquisition on the remote oscilloscope."""
+        script = self._build_script(
+            _SCPI_TEMPLATE,
+            resource = self.visa_resource,
+            commands = {
+                'TEKTRONIX': ['ACQuire:STATE STOP'],
+                'KEYSIGHT':  [':STOP'],
+                'AGILENT':   [':STOP'],
+            },
+        )
+        self._run_script(script)
 
     def close(self):
         """Close the SSH connection."""

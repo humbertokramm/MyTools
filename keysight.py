@@ -220,6 +220,16 @@ class KeysightScope:
         pos = txt.find(" - ")
         return txt.replace(' - ',' '*(31-pos))
     
+    # ---------------------------------------------------------
+    def single(self):
+        """Arm the oscilloscope for a single triggered acquisition."""
+        self._write(':SINGle')
+
+    def stop(self):
+        """Stop the current acquisition."""
+        self._write(':STOP')
+
+    # ---------------------------------------------------------
     def _write(self, txt):
         if self.debug:
             self.inst.write('*CLS')

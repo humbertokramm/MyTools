@@ -146,3 +146,16 @@ class TektronixNetScope:
             dict: Empty dict.
         """
         return {}
+
+    # ---------------------------------------------------------
+    # TRIGGER CONTROL (stubs — HTTP interface does not expose these)
+    # ---------------------------------------------------------
+    def single(self):
+        """No-op: trigger control not supported over HTTP."""
+        if self.debug:
+            print("single: not supported over HTTP")
+
+    def stop(self):
+        """No-op: trigger control not supported over HTTP."""
+        if self.debug:
+            print("stop: not supported over HTTP")
