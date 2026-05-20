@@ -8,6 +8,7 @@ from time import sleep
 from tektronix import TektronixScope
 from tektronix_net import TektronixNetScope
 from keysight import KeysightScope
+from scope_ssh import SshScope
 
 class Scope:
 
@@ -15,6 +16,15 @@ class Scope:
         self.overwrite = overwrite
         self.inst = None
         self.rm = None
+
+        # -------------------------------------------------
+        # SSH connection (oscilloscope on a remote Linux host)
+        # resource format: "SSH::user@host[::VISA_RESOURCE]"
+        # -------------------------------------------------
+        if resource is not None and resource.upper().startswith("SSH::"):
+            self.resource = resource
+            self.driver   = SshScope.from_resource_string(resource, debug)
+            return
 
         # -------------------------------------------------
         # HTTP connection (TDS3052B or similar)
@@ -145,14 +155,35 @@ class Scope:
             self.inst.close()
         if self.rm is not None:
             self.rm.close()
-    
+        if hasattr(self, 'driver') and hasattr(self.driver, 'close'):
+            self.driver.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
     # ---------------------------------------------------------
     # HIGH LEVEL CAPTURE
     # ---------------------------------------------------------
 
     @staticmethod
-    def main(file, resource=None, channel="CH1", screenshot=True, info=False, debug=False, overwrite=False):
-        scope = Scope(resource, debug, overwrite)
+    def main(file, resource=None, channel="CH1", screenshot=True,
+             info=False, debug=False, overwrite=False, scope=None):
+        """Capture waveform and optional screenshot.
+
+        Args:
+            scope (Scope, optional): Existing Scope instance to reuse.
+                When provided the connection is NOT closed after capture —
+                the caller is responsible for calling scope.close() (or
+                using the 'with Scope(...) as scope:' pattern).
+                When omitted a new connection is opened and closed
+                automatically after each call.
+        """
+        owned = scope is None
+        if owned:
+            scope = Scope(resource, debug, overwrite)
 
         if isinstance(channel, str):
             channel = [channel]
@@ -165,4 +196,5 @@ class Scope:
                 scope.capture_screen(file, channel[0], info)
 
         finally:
-            scope.close()
+            if owned:
+                scope.close()
