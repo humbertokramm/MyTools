@@ -42,15 +42,25 @@ from datetime import datetime
 
 rm = pyvisa.ResourceManager()
 
-if _resource == 'auto':
+def _open_inst(rm, resource, timeout=30000):
+    """Open resource, falling back to auto-detect if not found."""
+    if resource != 'auto':
+        try:
+            inst = rm.open_resource(resource)
+            inst.timeout = timeout
+            return inst
+        except Exception:
+            pass  # serial number not found — try auto-detect
     resources = rm.list_resources()
     candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
     if not candidates:
         print(json.dumps({'error': 'no instrument found', 'resources': list(resources)}))
         sys.exit(1)
-    _resource = candidates[0]
+    inst = rm.open_resource(candidates[0])
+    inst.timeout = timeout
+    return inst
 
-inst = rm.open_resource(_resource)
+inst = _open_inst(rm, _resource)
 inst.timeout = 30000
 idn = inst.query('*IDN?').strip()
 
@@ -144,15 +154,24 @@ from datetime import datetime
 
 rm = pyvisa.ResourceManager()
 
-if _resource == 'auto':
+def _open_inst(rm, resource, timeout=30000):
+    if resource != 'auto':
+        try:
+            inst = rm.open_resource(resource)
+            inst.timeout = timeout
+            return inst
+        except Exception:
+            pass
     resources = rm.list_resources()
     candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
     if not candidates:
         print(json.dumps({'error': 'no instrument found'}))
         sys.exit(1)
-    _resource = candidates[0]
+    inst = rm.open_resource(candidates[0])
+    inst.timeout = timeout
+    return inst
 
-inst = rm.open_resource(_resource)
+inst = _open_inst(rm, _resource)
 inst.timeout = 30000
 idn = inst.query('*IDN?').strip()
 delay = 0.2
@@ -245,15 +264,24 @@ import pyvisa
 
 rm = pyvisa.ResourceManager()
 
-if _resource == 'auto':
+def _open_inst(rm, resource, timeout=5000):
+    if resource != 'auto':
+        try:
+            inst = rm.open_resource(resource)
+            inst.timeout = timeout
+            return inst
+        except Exception:
+            pass
     resources = rm.list_resources()
     candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
     if not candidates:
         print(json.dumps({'error': 'no instrument found'}))
         sys.exit(1)
-    _resource = candidates[0]
+    inst = rm.open_resource(candidates[0])
+    inst.timeout = timeout
+    return inst
 
-inst = rm.open_resource(_resource)
+inst = _open_inst(rm, _resource)
 inst.timeout = 5000
 idn = inst.query('*IDN?').strip().upper()
 
@@ -284,15 +312,24 @@ import pyvisa
 
 rm = pyvisa.ResourceManager()
 
-if _resource == 'auto':
+def _open_inst(rm, resource, timeout=10000):
+    if resource != 'auto':
+        try:
+            inst = rm.open_resource(resource)
+            inst.timeout = timeout
+            return inst
+        except Exception:
+            pass
     resources = rm.list_resources()
     candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
     if not candidates:
         print(json.dumps({'error': 'no instrument found'}))
         sys.exit(1)
-    _resource = candidates[0]
+    inst = rm.open_resource(candidates[0])
+    inst.timeout = timeout
+    return inst
 
-inst = rm.open_resource(_resource)
+inst = _open_inst(rm, _resource)
 inst.timeout = 10000
 idn = inst.query('*IDN?').strip().upper()
 
