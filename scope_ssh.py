@@ -52,7 +52,7 @@ def _open_inst(rm, resource, timeout=30000):
         except Exception:
             pass  # serial number not found — try auto-detect
     resources = rm.list_resources()
-    candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
+    candidates = [r for r in resources if r.startswith('USB') or r.startswith('GPIB')]
     if not candidates:
         print(json.dumps({'error': 'no instrument found', 'resources': list(resources)}))
         sys.exit(1)
@@ -64,87 +64,89 @@ inst = _open_inst(rm, _resource)
 inst.timeout = 30000
 idn = inst.query('*IDN?').strip()
 
-# ── Tektronix ─────────────────────────────────────────────────────────────────
-if 'TEKTRONIX' in idn.upper():
-    inst.write(f'DATA:SOURCE {_channel}')
-    inst.write('DATA:WIDTH 1')
-    inst.write('DATA:ENC RPB')
-    inst.write('DATA:RESOLUTION REDUCED')
-    inst.write('DATA:START 1')
-    inst.write('DATA:STOP 10000')
+try:
+    # ── Tektronix ─────────────────────────────────────────────────────────────
+    if 'TEKTRONIX' in idn.upper():
+        inst.write(f'DATA:SOURCE {_channel}')
+        inst.write('DATA:WIDTH 1')
+        inst.write('DATA:ENC RPB')
+        inst.write('DATA:RESOLUTION REDUCED')
+        inst.write('DATA:START 1')
+        inst.write('DATA:STOP 10000')
 
-    ymult = float(inst.query('WFMPRE:YMULT?'))
-    yzero = float(inst.query('WFMPRE:YZERO?'))
-    yoff  = float(inst.query('WFMPRE:YOFF?'))
-    xincr = float(inst.query('WFMPRE:XINCR?'))
-    xzero = float(inst.query('WFMPRE:XZERO?'))
+        ymult = float(inst.query('WFMPRE:YMULT?'))
+        yzero = float(inst.query('WFMPRE:YZERO?'))
+        yoff  = float(inst.query('WFMPRE:YOFF?'))
+        xincr = float(inst.query('WFMPRE:XINCR?'))
+        xzero = float(inst.query('WFMPRE:XZERO?'))
 
-    coupling = inst.query(f'{_channel}:COUPling?').strip()
-    scale    = inst.query(f'{_channel}:SCAle?').strip()
-    bw       = inst.query(f'{_channel}:BANDwidth?').strip()
-    probe    = inst.query(f'{_channel}:PROBe?').strip()
+        coupling = inst.query(f'{_channel}:COUPling?').strip()
+        scale    = inst.query(f'{_channel}:SCAle?').strip()
+        bw       = inst.query(f'{_channel}:BANDwidth?').strip()
+        probe    = inst.query(f'{_channel}:PROBe?').strip()
 
-    raw     = inst.query_binary_values('CURVE?', datatype='B', container=list)
-    raw     = np.array(raw, dtype=float)
-    voltage = (raw - yoff) * ymult + yzero
-    t_arr   = np.arange(len(voltage)) * xincr + xzero
+        raw     = inst.query_binary_values('CURVE?', datatype='B', container=list)
+        raw     = np.array(raw, dtype=float)
+        voltage = (raw - yoff) * ymult + yzero
+        t_arr   = np.arange(len(voltage)) * xincr + xzero
 
-    result = {
-        'time'    : t_arr.tolist(),
-        'voltage' : voltage.tolist(),
-        'metadata': {
-            'Instrumento'           : idn,
-            'Canal'                 : _channel,
-            'Sample Rate (calculado)': 1 / xincr,
-            'Record Length'         : len(raw),
-            'Data da captura'       : datetime.now().isoformat(),
-            'coupling'              : coupling,
-            'vertical_scale'        : f'{scale} V/div',
-            'BW'                    : bw,
-        },
-    }
+        result = {
+            'time'    : t_arr.tolist(),
+            'voltage' : voltage.tolist(),
+            'metadata': {
+                'Instrumento'           : idn,
+                'Canal'                 : _channel,
+                'Sample Rate (calculado)': 1 / xincr,
+                'Record Length'         : len(raw),
+                'Data da captura'       : datetime.now().isoformat(),
+                'coupling'              : coupling,
+                'vertical_scale'        : f'{scale} V/div',
+                'BW'                    : bw,
+            },
+        }
 
-# ── Keysight / Agilent ────────────────────────────────────────────────────────
-elif 'KEYSIGHT' in idn.upper() or 'AGILENT' in idn.upper():
-    ch = _channel.replace('CH', 'CHAN')   # CH1 → CHAN1
-    inst.write(f':WAV:SOUR {ch}')
-    inst.write(':WAV:FORM BYTE')
-    inst.write(':WAV:UNS ON')
-    inst.write(':WAV:POIN:MODE MAX')
+    # ── Keysight / Agilent ────────────────────────────────────────────────────
+    elif 'KEYSIGHT' in idn.upper() or 'AGILENT' in idn.upper():
+        ch = _channel.replace('CH', 'CHAN')   # CH1 → CHAN1
+        inst.write(f':WAV:SOUR {ch}')
+        inst.write(':WAV:FORM BYTE')
+        inst.write(':WAV:UNS ON')
+        inst.write(':WAV:POIN:MODE MAX')
 
-    pre   = inst.query(':WAV:PRE?').split(',')
-    xincr = float(pre[4])
-    xorig = float(pre[5])
-    xref  = float(pre[6])
-    yincr = float(pre[7])
-    yorig = float(pre[8])
-    yref  = float(pre[9])
+        pre   = inst.query(':WAV:PRE?').split(',')
+        xincr = float(pre[4])
+        xorig = float(pre[5])
+        xref  = float(pre[6])
+        yincr = float(pre[7])
+        yorig = float(pre[8])
+        yref  = float(pre[9])
 
-    raw     = inst.query_binary_values(':WAV:DATA?', datatype='B', container=list)
-    raw     = np.array(raw, dtype=float)
-    voltage = (raw - yref - yorig) * yincr
-    t_arr   = (np.arange(len(raw)) - xref) * xincr + xorig
+        raw     = inst.query_binary_values(':WAV:DATA?', datatype='B', container=list)
+        raw     = np.array(raw, dtype=float)
+        voltage = (raw - yref - yorig) * yincr
+        t_arr   = (np.arange(len(raw)) - xref) * xincr + xorig
 
-    result = {
-        'time'    : t_arr.tolist(),
-        'voltage' : voltage.tolist(),
-        'metadata': {
-            'Instrumento'           : idn,
-            'Canal'                 : _channel,
-            'Sample Rate (calculado)': 1 / xincr if xincr else None,
-            'Record Length'         : len(raw),
-            'Data da captura'       : datetime.now().isoformat(),
-        },
-    }
+        result = {
+            'time'    : t_arr.tolist(),
+            'voltage' : voltage.tolist(),
+            'metadata': {
+                'Instrumento'           : idn,
+                'Canal'                 : _channel,
+                'Sample Rate (calculado)': 1 / xincr if xincr else None,
+                'Record Length'         : len(raw),
+                'Data da captura'       : datetime.now().isoformat(),
+            },
+        }
 
-else:
-    print(json.dumps({'error': f'unsupported instrument: {idn}'}))
-    sys.exit(1)
+    else:
+        print(json.dumps({'error': f'unsupported instrument: {idn}'}))
+        sys.exit(1)
 
-result['resource'] = _resource
-inst.close()
-rm.close()
-print(json.dumps(result))
+    result['resource'] = _resource
+    print(json.dumps(result))
+finally:
+    inst.close()
+    rm.close()
 '''
 
 _SCREEN_TEMPLATE = r'''
@@ -163,7 +165,7 @@ def _open_inst(rm, resource, timeout=30000):
         except Exception:
             pass
     resources = rm.list_resources()
-    candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
+    candidates = [r for r in resources if r.startswith('USB') or r.startswith('GPIB')]
     if not candidates:
         print(json.dumps({'error': 'no instrument found'}))
         sys.exit(1)
@@ -176,86 +178,152 @@ inst.timeout = 30000
 idn = inst.query('*IDN?').strip()
 delay = 0.2
 
-# ── Tektronix ─────────────────────────────────────────────────────────────────
-if 'TEKTRONIX' in idn.upper():
-    ch = _channel.replace('CH', '')
-    now = datetime.now()
-    inst.write(f':DATE "{now.strftime("%Y-%m-%d")}"')
-    time.sleep(delay)
-    inst.write(f':TIME "{now.strftime("%H:%M:%S")}"')
-    time.sleep(delay)
-
-    if _info and 'label' in _info:
-        inst.write(f':CH{ch}:LAB "{_info["label"]}"')
+try:
+    # ── Tektronix ─────────────────────────────────────────────────────────────
+    if 'TEKTRONIX' in idn.upper():
+        ch = _channel.replace('CH', '')
+        now = datetime.now()
+        inst.write(f':DATE "{now.strftime("%Y-%m-%d")}"')
         time.sleep(delay)
-        inst.write(f':CH{ch}:LAB:STATE ON')
+        inst.write(f':TIME "{now.strftime("%H:%M:%S")}"')
         time.sleep(delay)
 
-    if _info and 'cursor' in _info:
-        cursor = {k.lower(): v for k, v in _info['cursor'].items()}
-        has_y  = 'y1' in cursor or 'y2' in cursor
-        has_x  = 'x1' in cursor or 'x2' in cursor
-        inst.write(':CURSOR:STATE ON')
-        if has_y and not has_x:
-            inst.write(':CURSOR:FUNCTION HBARS')
-            inst.write(':CURSOR:HBARS:UNITS BASE')
-            inst.write(f':CURSOR:HBARS:SOURCE1 CH{ch}')
-            if 'y1' in cursor: inst.write(f':CURSOR:HBARS:POSITION1 {cursor["y1"]}')
-            if 'y2' in cursor: inst.write(f':CURSOR:HBARS:POSITION2 {cursor["y2"]}')
-        elif has_x and not has_y:
-            inst.write(':CURSOR:FUNCTION VBARS')
-            inst.write(':CURSOR:VBARS:UNITS SECONDS')
-            inst.write(f':CURSOR:VBARS:SOURCE1 CH{ch}')
-            if 'x1' in cursor: inst.write(f':CURSOR:VBARS:POSITION1 {cursor["x1"]}')
-            if 'x2' in cursor: inst.write(f':CURSOR:VBARS:POSITION2 {cursor["x2"]}')
-        else:
-            inst.write(':CURSOR:FUNCTION SCREEN')
-            inst.write(':CURSOR:HBARS:UNITS BASE')
-            inst.write(f':CURSOR:HBARS:SOURCE1 CH{ch}')
-            if 'y1' in cursor: inst.write(f':CURSOR:HBARS:POSITION1 {cursor["y1"]}')
-            if 'y2' in cursor: inst.write(f':CURSOR:HBARS:POSITION2 {cursor["y2"]}')
-            inst.write(':CURSOR:VBARS:UNITS SECONDS')
-            if 'x1' in cursor: inst.write(f':CURSOR:VBARS:POSITION1 {cursor["x1"]}')
-            if 'x2' in cursor: inst.write(f':CURSOR:VBARS:POSITION2 {cursor["x2"]}')
-
-    if _info and 'meas' in _info:
-        for i, v in enumerate(_info['meas'], start=1):
-            if i > 4:
-                break
-            if v is None:
-                inst.write(f'MEASU:MEAS{i}:STATE OFF')
-            elif v:
-                _MEAS_MAP = {
-                    'Vmax': 'MAXimum', 'Vmin': 'MINImum', 'Vpp': 'PK2pk',
-                    'Vamp': 'AMPlitude', 'Vtop': 'HIGH', 'Vbase': 'LOW',
-                    'Vavg': 'MEAN', 'Vrms': 'RMS', 'Frequency': 'FREQuency',
-                    'Period': 'PERIod', 'RiseTime': 'RISe', 'FallTime': 'FALL',
-                }
-                mtype = _MEAS_MAP.get(v, v)
-                inst.write(f'MEASU:MEAS{i}:STATE ON')
-                time.sleep(delay)
-                inst.write(f':MEASU:MEAS{i}:SOURCE1 CH{ch}')
-                time.sleep(delay)
-                inst.write(f':MEASU:MEAS{i}:TYPE {mtype}')
+        if _info and 'label' in _info:
+            inst.write(f':CH{ch}:LAB "{_info["label"]}"')
+            time.sleep(delay)
+            inst.write(f':CH{ch}:LAB:STATE ON')
             time.sleep(delay)
 
-    inst.write('HARDCopy:FORMat PNG')
-    inst.write('HARDCopy STARt')
-    raw = inst.read_raw()
+        if _info and 'cursor' in _info:
+            cursor = {k.lower(): v for k, v in _info['cursor'].items()}
+            has_y  = 'y1' in cursor or 'y2' in cursor
+            has_x  = 'x1' in cursor or 'x2' in cursor
+            inst.write(':CURSOR:STATE ON')
+            if has_y and not has_x:
+                inst.write(':CURSOR:FUNCTION HBARS')
+                inst.write(':CURSOR:HBARS:UNITS BASE')
+                inst.write(f':CURSOR:HBARS:SOURCE1 CH{ch}')
+                if 'y1' in cursor: inst.write(f':CURSOR:HBARS:POSITION1 {cursor["y1"]}')
+                if 'y2' in cursor: inst.write(f':CURSOR:HBARS:POSITION2 {cursor["y2"]}')
+            elif has_x and not has_y:
+                inst.write(':CURSOR:FUNCTION VBARS')
+                inst.write(':CURSOR:VBARS:UNITS SECONDS')
+                inst.write(f':CURSOR:VBARS:SOURCE1 CH{ch}')
+                if 'x1' in cursor: inst.write(f':CURSOR:VBARS:POSITION1 {cursor["x1"]}')
+                if 'x2' in cursor: inst.write(f':CURSOR:VBARS:POSITION2 {cursor["x2"]}')
+            else:
+                inst.write(':CURSOR:FUNCTION SCREEN')
+                inst.write(':CURSOR:HBARS:UNITS BASE')
+                inst.write(f':CURSOR:HBARS:SOURCE1 CH{ch}')
+                if 'y1' in cursor: inst.write(f':CURSOR:HBARS:POSITION1 {cursor["y1"]}')
+                if 'y2' in cursor: inst.write(f':CURSOR:HBARS:POSITION2 {cursor["y2"]}')
+                inst.write(':CURSOR:VBARS:UNITS SECONDS')
+                if 'x1' in cursor: inst.write(f':CURSOR:VBARS:POSITION1 {cursor["x1"]}')
+                if 'x2' in cursor: inst.write(f':CURSOR:VBARS:POSITION2 {cursor["x2"]}')
 
-    if raw[0:1] == b'#':
-        hlen = int(raw[1:2])
-        dlen = int(raw[2:2+hlen])
-        raw  = raw[2+hlen:2+hlen+dlen]
+        if _info and 'meas' in _info:
+            for i, v in enumerate(_info['meas'], start=1):
+                if i > 4:
+                    break
+                if v is None:
+                    inst.write(f'MEASU:MEAS{i}:STATE OFF')
+                elif v:
+                    _MEAS_MAP = {
+                        'Vmax': 'MAXimum', 'Vmin': 'MINImum', 'Vpp': 'PK2pk',
+                        'Vamp': 'AMPlitude', 'Vtop': 'HIGH', 'Vbase': 'LOW',
+                        'Vavg': 'MEAN', 'Vrms': 'RMS', 'Frequency': 'FREQuency',
+                        'Period': 'PERIod', 'RiseTime': 'RISe', 'FallTime': 'FALL',
+                    }
+                    mtype = _MEAS_MAP.get(v, v)
+                    inst.write(f'MEASU:MEAS{i}:STATE ON')
+                    time.sleep(delay)
+                    inst.write(f':MEASU:MEAS{i}:SOURCE1 CH{ch}')
+                    time.sleep(delay)
+                    inst.write(f':MEASU:MEAS{i}:TYPE {mtype}')
+                time.sleep(delay)
 
-    print(json.dumps({'png': base64.b64encode(raw).decode()}))
+        inst.write('HARDCopy:FORMat PNG')
+        inst.write('HARDCopy STARt')
+        raw = inst.read_raw()
 
-else:
-    print(json.dumps({'error': f'screenshot not implemented for: {idn}'}))
-    sys.exit(1)
+        if raw[0:1] == b'#':
+            hlen = int(raw[1:2])
+            dlen = int(raw[2:2+hlen])
+            raw  = raw[2+hlen:2+hlen+dlen]
 
-inst.close()
-rm.close()
+        print(json.dumps({'png': base64.b64encode(raw).decode()}))
+
+    else:
+        print(json.dumps({'error': f'screenshot not implemented for: {idn}'}))
+        sys.exit(1)
+
+finally:
+    inst.close()
+    rm.close()
+'''
+
+_MONITOR_TEMPLATE = r'''
+import json, sys, time
+import pyvisa
+
+rm = pyvisa.ResourceManager()
+
+def _open_inst(rm, resource, timeout=5000):
+    if resource != 'auto':
+        try:
+            inst = rm.open_resource(resource)
+            inst.timeout = timeout
+            return inst
+        except Exception:
+            pass
+    resources = rm.list_resources()
+    candidates = [r for r in resources if r.startswith('USB') or r.startswith('GPIB')]
+    if not candidates:
+        print(json.dumps({'error': 'no instrument found'}))
+        sys.exit(1)
+    inst = rm.open_resource(candidates[0])
+    inst.timeout = timeout
+    return inst
+
+inst = _open_inst(rm, _resource)
+idn  = inst.query('*IDN?').strip().upper()
+
+elapsed_total = 0.0
+done          = False
+
+def _arm(inst, idn):
+    if 'TEKTRONIX' in idn:
+        inst.write('ACQuire:STOPAfter SEQuence')
+        inst.write('ACQuire:STATE RUN')
+    elif 'KEYSIGHT' in idn or 'AGILENT' in idn:
+        inst.write(':SINGle')
+
+def _is_done(inst, idn):
+    if 'TEKTRONIX' in idn:
+        return inst.query('ACQuire:STATE?').strip() == '0'
+    elif 'KEYSIGHT' in idn or 'AGILENT' in idn:
+        return int(inst.query(':OPERegister:CONDition?').strip()) & 8 == 0
+    return False
+
+try:
+    _arm(inst, idn)
+    while elapsed_total < _max_wait:
+        elapsed = 0.0
+        while elapsed < _retry_timeout:
+            if _is_done(inst, idn):
+                done = True
+                break
+            time.sleep(_interval)
+            elapsed += _interval
+        if done:
+            break
+        elapsed_total += elapsed
+        _arm(inst, idn)  # re-arm for next attempt
+finally:
+    inst.close()
+    rm.close()
+
+print(json.dumps({'triggered': done, 'elapsed': round(elapsed_total, 2)}))
 '''
 
 _WAIT_TEMPLATE = r'''
@@ -273,7 +341,7 @@ def _open_inst(rm, resource, timeout=5000):
         except Exception:
             pass
     resources = rm.list_resources()
-    candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
+    candidates = [r for r in resources if r.startswith('USB') or r.startswith('GPIB')]
     if not candidates:
         print(json.dumps({'error': 'no instrument found'}))
         sys.exit(1)
@@ -288,21 +356,23 @@ idn = inst.query('*IDN?').strip().upper()
 elapsed = 0.0
 done    = False
 
-while elapsed < _timeout:
-    if 'TEKTRONIX' in idn:
-        if inst.query('ACQuire:STATE?').strip() == '0':
-            done = True
-            break
-    elif 'KEYSIGHT' in idn or 'AGILENT' in idn:
-        cond = int(inst.query(':OPERegister:CONDition?').strip())
-        if cond & 8 == 0:
-            done = True
-            break
-    time.sleep(_interval)
-    elapsed += _interval
+try:
+    while elapsed < _timeout:
+        if 'TEKTRONIX' in idn:
+            if inst.query('ACQuire:STATE?').strip() == '0':
+                done = True
+                break
+        elif 'KEYSIGHT' in idn or 'AGILENT' in idn:
+            cond = int(inst.query(':OPERegister:CONDition?').strip())
+            if cond & 8 == 0:
+                done = True
+                break
+        time.sleep(_interval)
+        elapsed += _interval
+finally:
+    inst.close()
+    rm.close()
 
-inst.close()
-rm.close()
 print(json.dumps({'triggered': done, 'elapsed': round(elapsed, 2)}))
 '''
 
@@ -321,7 +391,7 @@ def _open_inst(rm, resource, timeout=10000):
         except Exception:
             pass
     resources = rm.list_resources()
-    candidates = [r for r in resources if 'USB' in r or 'GPIB' in r]
+    candidates = [r for r in resources if r.startswith('USB') or r.startswith('GPIB')]
     if not candidates:
         print(json.dumps({'error': 'no instrument found'}))
         sys.exit(1)
@@ -333,17 +403,19 @@ inst = _open_inst(rm, _resource)
 inst.timeout = 10000
 idn = inst.query('*IDN?').strip().upper()
 
-commands = []
-for brand, cmds in _commands.items():
-    if brand.upper() in idn:
-        commands = cmds
-        break
+try:
+    commands = []
+    for brand, cmds in _commands.items():
+        if brand.upper() in idn:
+            commands = cmds
+            break
 
-for cmd in commands:
-    inst.write(cmd)
+    for cmd in commands:
+        inst.write(cmd)
+finally:
+    inst.close()
+    rm.close()
 
-inst.close()
-rm.close()
 print(json.dumps({'ok': True}))
 '''
 
@@ -408,6 +480,10 @@ class SshScope:
             password = getpass.getpass(f"SSH password for {user}@{host}: ")
             self._ssh.connect(host, port=port, username=user,
                               password=password, look_for_keys=False, allow_agent=False)
+
+        # Keep the SSH session alive during long waits (e.g. monitor_single).
+        # Sends a keepalive packet every 60 s to prevent idle timeout.
+        self._ssh.get_transport().set_keepalive(60)
 
         print(f"SSH connection established: {user}@{host}:{port}")
 
@@ -543,6 +619,34 @@ class SshScope:
             return None
 
         return base64.b64decode(png_b64)
+
+    def monitor_single(self, max_wait=3600, retry_timeout=30, interval=0.5):
+        """Wait for a single acquisition keeping one USB connection open.
+
+        Runs a single remote script that arms the oscilloscope, polls for
+        the trigger, re-arms on timeout, and only closes the USB connection
+        when the trigger fires (or *max_wait* expires). This avoids the
+        repeated USB reset that happens when :meth:`wait_single` is called
+        in a loop.
+
+        Args:
+            max_wait      (float): Total seconds to wait. Default 3600 (1 h).
+            retry_timeout (float): Seconds per attempt before re-arming.
+                Default 30.
+            interval      (float): Polling interval in seconds. Default 0.5.
+
+        Returns:
+            bool: ``True`` if triggered, ``False`` if *max_wait* expired.
+        """
+        script = self._build_script(
+            _MONITOR_TEMPLATE,
+            resource      = self.visa_resource,
+            max_wait      = max_wait,
+            retry_timeout = retry_timeout,
+            interval      = interval,
+        )
+        result = self._run_script(script)
+        return result.get('triggered', False)
 
     def wait_single(self, timeout=30, interval=0.5):
         """Block until a single acquisition completes on the remote scope.

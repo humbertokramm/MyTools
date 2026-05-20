@@ -150,6 +150,27 @@ class Scope:
     # ---------------------------------------------------------
     # trigger control
     # ---------------------------------------------------------
+    def monitor_single(self, max_wait=3600, retry_timeout=30, interval=0.5):
+        """Wait for a single acquisition, re-arming until triggered or timeout.
+
+        For SSH scopes this keeps a single USB connection open for the entire
+        wait — use this instead of looping :meth:`wait_single` to avoid USB
+        device resets on every iteration.
+
+        Args:
+            max_wait      (float): Total seconds to wait. Default 3600 (1 h).
+            retry_timeout (float): Seconds per attempt before re-arming.
+            interval      (float): Polling interval in seconds.
+
+        Returns:
+            bool: ``True`` if triggered, ``False`` if *max_wait* expired.
+        """
+        return self.driver.monitor_single(
+            max_wait=max_wait,
+            retry_timeout=retry_timeout,
+            interval=interval,
+        )
+
     def single(self):
         """Arm the oscilloscope for a single triggered acquisition."""
         self.driver.single()

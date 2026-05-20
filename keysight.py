@@ -225,6 +225,25 @@ class KeysightScope:
         """Arm the oscilloscope for a single triggered acquisition."""
         self._write(':SINGle')
 
+    def monitor_single(self, max_wait=3600, retry_timeout=30, interval=0.5):
+        """Wait for a single acquisition, re-arming on each timeout.
+
+        Args:
+            max_wait      (float): Total seconds to wait. Default 3600 (1 h).
+            retry_timeout (float): Seconds per attempt before re-arming.
+            interval      (float): Polling interval in seconds.
+
+        Returns:
+            bool: ``True`` if triggered, ``False`` if *max_wait* expired.
+        """
+        elapsed_total = 0.0
+        while elapsed_total < max_wait:
+            self.single()
+            if self.wait_single(timeout=retry_timeout, interval=interval):
+                return True
+            elapsed_total += retry_timeout
+        return False
+
     def wait_single(self, timeout=30, interval=0.5):
         """Block until a single acquisition completes or *timeout* expires.
 

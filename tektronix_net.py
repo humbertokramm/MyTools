@@ -150,6 +150,12 @@ class TektronixNetScope:
     # ---------------------------------------------------------
     # TRIGGER CONTROL (stubs — HTTP interface does not expose these)
     # ---------------------------------------------------------
+    def monitor_single(self, max_wait=3600, retry_timeout=30, interval=0.5):
+        """Not supported over HTTP — returns False immediately."""
+        if self.debug:
+            print("monitor_single: not supported over HTTP")
+        return False
+
     def single(self):
         """No-op: trigger control not supported over HTTP."""
         if self.debug:
