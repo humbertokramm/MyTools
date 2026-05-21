@@ -1080,6 +1080,54 @@ class CsvScope:
 		if data != 'None':
 			ax.annotate(data,xy=(0.5,1e-2),xycoords='axes fraction', ha='center', fontsize=8)
 
+		# SpanSelector: arrasta para ver ΔT; duplo-clique para limpar
+		def _fmt_dt(dt):
+			"""Formata ΔT com a unidade mais legível."""
+			abs_dt = abs(dt)
+			if abs_dt >= 1:       return f'ΔT = {dt:.4g} s'
+			if abs_dt >= 1e-3:    return f'ΔT = {dt*1e3:.4g} ms'
+			if abs_dt >= 1e-6:    return f'ΔT = {dt*1e6:.4g} µs'
+			if abs_dt >= 1e-9:    return f'ΔT = {dt*1e9:.4g} ns'
+			return                       f'ΔT = {dt*1e12:.4g} ps'
+
+		fig._span_text = None  # referência ao texto exibido
+
+		def on_span(xmin, xmax):
+			dt = xmax - xmin
+			if abs(dt) < 1e-15:
+				return
+			# Remove texto anterior
+			if fig._span_text is not None:
+				try: fig._span_text.remove()
+				except: pass
+			# Exibe ΔT centrado na seleção, no topo do eixo
+			ymid = ax.get_ylim()[1]
+			fig._span_text = ax.text(
+				(xmin + xmax) / 2, ymid, _fmt_dt(dt),
+				ha='center', va='top',
+				fontsize=10, fontweight='bold',
+				bbox=dict(boxstyle='round,pad=0.3', facecolor='steelblue',
+						  alpha=0.8, edgecolor='none'),
+				color='white', zorder=10,
+			)
+			fig.canvas.draw()
+
+		def on_dblclick(event):
+			if event.dblclick and event.inaxes is ax:
+				if fig._span_text is not None:
+					try: fig._span_text.remove()
+					except: pass
+					fig._span_text = None
+				fig.canvas.draw()
+
+		from matplotlib.widgets import SpanSelector
+		fig._span = SpanSelector(
+			ax, on_span, 'horizontal',
+			useblit=False,
+			props=dict(alpha=0.15, facecolor='steelblue'),
+		)
+		fig.canvas.mpl_connect('button_press_event', on_dblclick)
+
 		plt.ion()  # Ativa o modo interativo
 		# Salva Figura
 		self.save_figure(plt,out,path,t,transparent)
