@@ -1049,8 +1049,34 @@ class CsvScope:
 			if 'loc_legend' in serie: loc_legend = serie['loc_legend']
 			if 'loc_legend2' in serie: loc_legend2 = serie['loc_legend2']
 
-		if loc_legend != None: ax.legend(loc=loc_legend)
-		if loc_legend2 != None: ax2.legend(loc=loc_legend2)
+		loc = loc_legend if loc_legend is not None else 'upper right'
+		legenda = ax.legend(loc=loc)
+
+		# Legenda interativa: clique para mostrar/ocultar a linha
+		mapa = {}
+		def _map_legend(legend, ax_lines):
+			label_to_line = {l.get_label(): l for l in ax_lines if not l.get_label().startswith('_')}
+			for leg_line in legend.get_lines():
+				leg_line.set_picker(5)
+				orig = label_to_line.get(leg_line.get_label())
+				if orig:
+					mapa[leg_line] = orig
+
+		_map_legend(legenda, ax.get_lines())
+
+		def on_pick(event):
+			orig = mapa.get(event.artist)
+			if orig:
+				visible = not orig.get_visible()
+				orig.set_visible(visible)
+				event.artist.set_alpha(1.0 if visible else 0.2)
+				fig.canvas.draw()
+
+		fig.canvas.mpl_connect('pick_event', on_pick)
+
+		if loc_legend2 is not None:
+			legenda2 = ax2.legend(loc=loc_legend2)
+			_map_legend(legenda2, ax2.get_lines())
 		if data != 'None':
 			ax.annotate(data,xy=(0.5,1e-2),xycoords='axes fraction', ha='center', fontsize=8)
 
