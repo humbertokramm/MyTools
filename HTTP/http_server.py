@@ -1,10 +1,30 @@
 import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import json
 import threading
 import tkinter as tk
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 import subprocess
-from intranetVersionChecker import check_update, update_local
+from intranetVersionChecker import check_update, update_local, check_fpga_update, update_fpga_local
+
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "http_server_config.json")
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_config(data):
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 
@@ -69,6 +89,8 @@ def start_gui(IP, PORT):
     root = tk.Tk()
     root.title("ONIE Install Links")
 
+    cfg = load_config()
+
     frame = tk.Frame(root)
     frame.pack(padx=10, pady=10)
 
@@ -76,9 +98,9 @@ def start_gui(IP, PORT):
     info = tk.Label(frame, text=f"Servidor: http://{IP}:{PORT}")
     info.pack(pady=(0, 10))
 
-    # ---------------- configuração ----------------
-    tipo_var = tk.StringVar(value="FT")
-    projeto_var = tk.StringVar(value="4201")
+    # ---------------- configuração firmware ----------------
+    tipo_var = tk.StringVar(value=cfg.get("tipo", "FT"))
+    projeto_var = tk.StringVar(value=cfg.get("projeto", "4201"))
 
     linha_config = tk.Frame(frame)
     linha_config.pack(pady=5)
@@ -94,6 +116,14 @@ def start_gui(IP, PORT):
     status_version.pack(pady=5)
 
     # ---------------- funções ----------------
+    def _save_fw_config(*_):
+        cfg["tipo"] = tipo_var.get()
+        cfg["projeto"] = projeto_var.get()
+        save_config(cfg)
+
+    tipo_var.trace_add("write", _save_fw_config)
+    projeto_var.trace_add("write", _save_fw_config)
+
     def verificar_versao():
 
         tipo = tipo_var.get()
@@ -130,9 +160,64 @@ def start_gui(IP, PORT):
 
         threading.Thread(target=task, daemon=True).start()
 
-    # botões
+    # botões firmware
     tk.Button(frame, text="Verificar versão", command=verificar_versao).pack(pady=2)
     tk.Button(frame, text="Atualizar", command=atualizar).pack(pady=2)
+
+    # ---------------- separador ----------------
+    tk.Frame(frame, height=1, bg="gray").pack(fill="x", pady=8)
+
+    # ---------------- configuração FPGA ----------------
+    tk.Label(frame, text="FPGA", font=("", 9, "bold")).pack()
+
+    fpga_var = tk.StringVar(value=cfg.get("fpga_projeto", "3407"))
+
+    linha_fpga = tk.Frame(frame)
+    linha_fpga.pack(pady=3)
+    tk.Label(linha_fpga, text="Projeto FPGA:").pack(side="left")
+    fpga_entry = tk.Entry(linha_fpga, textvariable=fpga_var, width=6)
+    fpga_entry.pack(side="left")
+
+    status_fpga = tk.Label(frame, text="Status: aguardando")
+    status_fpga.pack(pady=3)
+
+    def _save_fpga_projeto(*_):
+        cfg["fpga_projeto"] = fpga_var.get()
+        save_config(cfg)
+
+    fpga_entry.bind("<FocusOut>", _save_fpga_projeto)
+    fpga_entry.bind("<Return>", _save_fpga_projeto)
+
+    def verificar_fpga():
+        projeto = fpga_var.get()
+        status_fpga.config(text="Verificando...", fg="black")
+        def task():
+            status, arquivo = check_fpga_update(projeto)
+            if status == "OK":
+                status_fpga.config(text=f"Atualizado: {arquivo}", fg="green")
+            elif status == "UPDATE":
+                status_fpga.config(text=f"Novo disponível: {arquivo}", fg="orange")
+            else:
+                status_fpga.config(text="Erro ao verificar", fg="red")
+        threading.Thread(target=task, daemon=True).start()
+
+    def atualizar_fpga():
+        projeto = fpga_var.get()
+        status_fpga.config(text="Baixando...", fg="black")
+        def task():
+            sucesso = update_fpga_local(projeto)
+            if sucesso:
+                status_fpga.config(text="FPGA atualizado", fg="green")
+                atualizar_lista()
+            else:
+                status_fpga.config(text="Erro no download FPGA", fg="red")
+        threading.Thread(target=task, daemon=True).start()
+
+    tk.Button(frame, text="Verificar FPGA", command=verificar_fpga).pack(pady=2)
+    tk.Button(frame, text="Atualizar FPGA", command=atualizar_fpga).pack(pady=2)
+
+    # ---------------- separador ----------------
+    tk.Frame(frame, height=1, bg="gray").pack(fill="x", pady=8)
 
     # ---------------- lista de arquivos ----------------
     lista_frame = tk.Frame(frame)

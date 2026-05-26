@@ -1,7 +1,126 @@
 import urllib.request
+import urllib.parse
 import re
 import os
 import ssl
+
+
+FPGA_LIST_URL = (
+    "https://jenkins.ped.datacom.net.br"
+    "/job/+develop_doc+dm-sw-lp/Module_documentation/logic_list.html"
+)
+
+
+# -------------------------------
+# FPGA — listar releases remotos
+# -------------------------------
+def get_fpga_releases(projeto):
+    """Retorna lista de arquivos .zip release para o projeto FPGA dado.
+
+    Filtra apenas entradas com 'release' no nome, ordena pelo campo de
+    data embutido (YY-MM-DD) e retorna do mais antigo ao mais recente.
+    """
+    projeto = str(projeto).lstrip("pPdD")   # aceita "3407" ou "pd3407"
+
+    try:
+        context = ssl._create_unverified_context()
+        response = urllib.request.urlopen(FPGA_LIST_URL, timeout=10, context=context)
+        html = response.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print("Erro ao acessar Jenkins FPGA:", e)
+        return []
+
+    # Extrai todos os hrefs que apontam para .zip do projeto
+    hrefs = re.findall(r'href="([^"]*pd' + projeto + r'[^"]*\.zip)"', html, re.IGNORECASE)
+
+    # Mantém só os releases
+    releases = [h for h in hrefs if "release" in h.lower()]
+
+    # Resolve cada href para URL absoluta + extrai nome do arquivo
+    entries = {}
+    for href in releases:
+        url = urllib.parse.urljoin(FPGA_LIST_URL, href)
+        name = os.path.basename(urllib.parse.urlparse(url).path)
+        entries[name] = url   # dedup por nome, mantém última URL
+
+    # Ordena pelo campo de data no nome: ..._release_NN_YY-MM-DD_HHhMMmin.zip
+    def _sort_key(name):
+        m = re.search(r'(\d{2}-\d{2}-\d{2}_\d{2}h\d{2})', name)
+        return m.group(1) if m else name
+
+    return [(n, entries[n]) for n in sorted(entries, key=_sort_key)]
+
+
+def get_latest_fpga(projeto):
+    """Retorna (filename, url) do release mais recente para o projeto FPGA."""
+    releases = get_fpga_releases(projeto)
+    return releases[-1] if releases else None
+
+
+# -------------------------------
+# FPGA — verificar atualização
+# -------------------------------
+def check_fpga_update(projeto, path="."):
+    """Verifica se o release mais recente já está baixado localmente.
+
+    Returns:
+        ("OK",     filename)  — já atualizado
+        ("UPDATE", filename)  — há versão mais nova disponível
+        ("ERROR",  None)      — falha ao acessar o servidor
+    """
+    entry = get_latest_fpga(projeto)
+    if not entry:
+        return "ERROR", None
+
+    nome, _ = entry
+    locais = [f for f in os.listdir(path) if f.lower().endswith(".zip")]
+    if nome in locais:
+        return "OK", nome
+    return "UPDATE", nome
+
+
+# -------------------------------
+# FPGA — baixar e limpar antigos
+# -------------------------------
+def update_fpga_local(projeto, path="."):
+    """Baixa o release FPGA mais recente e remove versões antigas do projeto."""
+    projeto_norm = str(projeto).lstrip("pPdD")
+    entry = get_latest_fpga(projeto_norm)
+
+    if not entry:
+        print("Erro ao obter versão FPGA remota")
+        return False
+
+    nome, url = entry
+    locais = [f for f in os.listdir(path) if f.lower().endswith(".zip")]
+
+    if nome in locais:
+        print("FPGA já atualizado:", nome)
+        return True
+
+    destino = os.path.join(path, nome)
+
+    print("Baixando FPGA:", nome)
+    try:
+        context = ssl._create_unverified_context()
+        with urllib.request.urlopen(url, timeout=60, context=context) as resp, \
+             open(destino, "wb") as f:
+            f.write(resp.read())
+        print("Download FPGA concluído")
+    except Exception as e:
+        print("Erro no download FPGA:", e)
+        return False
+
+    # Remove .zip antigos do mesmo projeto
+    for f in locais:
+        if f"pd{projeto_norm}" in f.lower() and f != nome:
+            try:
+                os.remove(os.path.join(path, f))
+                print("Removido:", f)
+            except Exception as e:
+                print("Erro ao remover:", f, e)
+
+    return True
 
 
 # -------------------------------
