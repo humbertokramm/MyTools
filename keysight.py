@@ -192,7 +192,7 @@ class KeysightScope:
                 if 'x1' in cursor: self._write(f':MARKer:X1P {cursor["x1"]}')
                 if 'x2' in cursor: self._write(f':MARKer:X2P {cursor["x2"]}')
             if 'meas' in info and len(info['meas']) > 0:
-                if len(info['meas']) > 0: self._write(":MEASure:CLEar")
+                #if len(info['meas']) > 0: self._write(":MEASure:CLEar")
                 for v in info['meas']:
                     v = self._map_measure(v)
                     if v == 'RISetime' or v == 'FALLtime':
