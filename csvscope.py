@@ -406,6 +406,7 @@ class CsvScope:
 		brd=config['brand'] if 'brand' in config else 'ROHDE'
 		pln=config['plane'] if 'plane' in config else 1
 		ot=config['offset time'] if 'offset time' in config else 0 
+		o=config['offset y'] if 'offset y' in config else 0 
 		dt=config['std duty'] if 'std duty' in config else self.dt
 		g = config['gain'] if 'gain' in config else 1
 		
@@ -423,6 +424,7 @@ class CsvScope:
 			'type': modo,
 			#'brand':brd,
 			'offset time':ot,
+			'offset y':o,
 			'std duty':dt,
 			#'draw':[],
 			'gain':g,
@@ -442,6 +444,7 @@ class CsvScope:
 		lx = d['labelx']
 		ly = d['labely']
 		ot = d['offset time']
+		o  = d['offset y']
 		g = gain if gain != None else d['gain']
 		d['x'] = df[df.columns[0]].astype(float)*(1/format_eng(lx))+ot*(1/format_eng(lx))
 		d['y'] = df[df.columns[c]].astype(float)*g*(1/format_eng(ly))+o*(1/format_eng(ly))
