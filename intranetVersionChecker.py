@@ -72,18 +72,22 @@ def check_fpga_update(projeto, path="."):
     if not entry:
         return "ERROR", None
 
-    nome, _ = entry
-    locais = [f for f in os.listdir(path) if f.lower().endswith(".zip")]
-    if nome in locais:
-        return "OK", nome
-    return "UPDATE", nome
+    nome_zip, _ = entry
+    nome_rbf = os.path.splitext(nome_zip)[0] + ".rbf"
+
+    locais_rbf = [f for f in os.listdir(path) if f.lower().endswith(".rbf")]
+    if nome_rbf in locais_rbf:
+        return "OK", nome_rbf
+    return "UPDATE", nome_rbf
 
 
 # -------------------------------
 # FPGA — baixar e limpar antigos
 # -------------------------------
 def update_fpga_local(projeto, path="."):
-    """Baixa o release FPGA mais recente e remove versões antigas do projeto."""
+    """Baixa o release FPGA mais recente, extrai o .rbf e remove arquivos antigos."""
+    import zipfile
+
     projeto_norm = str(projeto).lstrip("pPdD")
     entry = get_latest_fpga(projeto_norm)
 
@@ -92,28 +96,61 @@ def update_fpga_local(projeto, path="."):
         return False
 
     nome, url = entry
-    locais = [f for f in os.listdir(path) if f.lower().endswith(".zip")]
+    nome_base = os.path.splitext(nome)[0]   # ex: pd3407f00_0x0A_cyc10lp_release_03_...
+    nome_rbf  = nome_base + ".rbf"
 
-    if nome in locais:
-        print("FPGA já atualizado:", nome)
+    locais_zip = [f for f in os.listdir(path) if f.lower().endswith(".zip")]
+    locais_rbf = [f for f in os.listdir(path) if f.lower().endswith(".rbf")]
+
+    # Se o .rbf final já existe, não precisa baixar de novo
+    if nome_rbf in locais_rbf:
+        print("FPGA já atualizado:", nome_rbf)
         return True
 
-    destino = os.path.join(path, nome)
+    # Baixa o zip
+    destino_zip = os.path.join(path, nome)
+    if nome not in locais_zip:
+        print("Baixando FPGA:", nome)
+        try:
+            context = ssl._create_unverified_context()
+            with urllib.request.urlopen(url, timeout=60, context=context) as resp, \
+                 open(destino_zip, "wb") as f:
+                f.write(resp.read())
+            print("Download FPGA concluído")
+        except Exception as e:
+            print("Erro no download FPGA:", e)
+            return False
 
-    print("Baixando FPGA:", nome)
+    # Extrai o .rbf com o mesmo nome base do zip
+    print("Extraindo:", nome_rbf)
     try:
-        context = ssl._create_unverified_context()
-        with urllib.request.urlopen(url, timeout=60, context=context) as resp, \
-             open(destino, "wb") as f:
-            f.write(resp.read())
-        print("Download FPGA concluído")
+        with zipfile.ZipFile(destino_zip) as zf:
+            # Localiza o membro correto (pode estar numa subpasta dentro do zip)
+            membros = [m for m in zf.namelist() if os.path.basename(m) == nome_rbf]
+            if not membros:
+                print(f"Arquivo {nome_rbf} não encontrado dentro do zip")
+                return False
+            membro = membros[0]
+            # Extrai direto para path sem recriar subpastas
+            data = zf.read(membro)
+            with open(os.path.join(path, nome_rbf), "wb") as f:
+                f.write(data)
+        print("Extração concluída:", nome_rbf)
     except Exception as e:
-        print("Erro no download FPGA:", e)
+        print("Erro na extração:", e)
         return False
 
-    # Remove .zip antigos do mesmo projeto
-    for f in locais:
-        if f"pd{projeto_norm}" in f.lower() and f != nome:
+    # Remove .zip e .rbf antigos do mesmo projeto
+    for f in locais_zip:
+        if f"pd{projeto_norm}" in f.lower():
+            try:
+                os.remove(os.path.join(path, f))
+                print("Removido:", f)
+            except Exception as e:
+                print("Erro ao remover:", f, e)
+
+    for f in locais_rbf:
+        if f"pd{projeto_norm}" in f.lower() and f != nome_rbf:
             try:
                 os.remove(os.path.join(path, f))
                 print("Removido:", f)

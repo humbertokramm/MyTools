@@ -1,0 +1,13 @@
+comport = arg and arg[1] or "COM13"  -- fallback se não passar
+ju_hw2:card_init(comport)
+ju_hw2:voltage_force_start("A")
+ju_hw2:write_pin_probe(0,1,false)
+ju_hw2:write_pin_probe(1,0,false)
+ju_hw2:write_pin_probe(3,0,false)
+ju_hw2:write_pin_probe(4,1,false)
+ju_hw2:write_pin_probe(5,0,false)
+ju_hw2:write_pin_probe(6,0,false)
+ju_hw2:set_pwr_chain(1,"1V8", false)
+ju_hw2:set_pwr_chain(2,"3V3", false)
+ju_hw2:set_pwr_chain(3,"2V5", false)
+ju_hw2:set_pwr_chain(4,"2V5", false)
