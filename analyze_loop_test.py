@@ -948,18 +948,22 @@ def build(loops, filepath, sensor_keys, ref_ok):
                 f'</tr>'
             )
 
-        # ── Firmware ──────────────────────────────────────────────────────────
-        fw_parts = []
+        # ── Firmware: MAX34460 / ZL30733 (FW+Cfg) / GNSS — linhas separadas ────
         if max34460:
-            fw_parts.append(f'<td class="dk">MAX34460 CRC</td><td class="dv">{max34460}</td>')
-        if zl_fw:
-            fw_parts.append(f'<td class="dk">ZL30733 FW</td><td class="dv">{zl_fw}</td>')
-        if zl_cfg:
-            fw_parts.append(f'<td class="dk">ZL30733 Cfg</td><td class="dv">{zl_cfg}</td>')
+            rows.append(
+                f'<tr><td class="dk">MAX34460 CRC</td><td class="dv">{max34460}</td></tr>'
+            )
+        if zl_fw or zl_cfg:
+            zl_cells = ''
+            if zl_fw:
+                zl_cells += f'<td class="dk">ZL30733 FW</td><td class="dv">{zl_fw}</td>'
+            if zl_cfg:
+                zl_cells += f'<td class="dk">ZL30733 Cfg</td><td class="dv">{zl_cfg}</td>'
+            rows.append(f'<tr>{zl_cells}</tr>')
         if gnss:
-            fw_parts.append(f'<td class="dk">GNSS</td><td class="dv">{gnss}</td>')
-        if fw_parts:
-            rows.append(f'<tr>{"".join(fw_parts)}</tr>')
+            rows.append(
+                f'<tr><td class="dk">GNSS</td><td class="dv">{gnss}</td></tr>'
+            )
 
         # ── Lua ───────────────────────────────────────────────────────────────
         if lua_sha1:
@@ -1004,13 +1008,15 @@ def build(loops, filepath, sensor_keys, ref_ok):
                 f'<td {KS}>SN</td><td {VS}>{t["sn"]}</td>'
                 f'<td {KS}>HV</td><td {VS}>{t["hv"]}</td></tr>'
             )
-        fw_hr = []
-        if max34460: fw_hr.append(f'<td {KS}>MAX34460 CRC</td><td {VS}>{max34460}</td>')
-        if zl_fw:    fw_hr.append(f'<td {KS}>ZL30733 FW</td><td {VS}>{zl_fw}</td>')
-        if zl_cfg:   fw_hr.append(f'<td {KS}>ZL30733 Cfg</td><td {VS}>{zl_cfg}</td>')
-        if gnss:     fw_hr.append(f'<td {KS}>GNSS</td><td {VS}>{gnss}</td>')
-        if fw_hr:
-            hr.append(f'<tr>{"".join(fw_hr)}</tr>')
+        if max34460:
+            hr.append(f'<tr><td {KS}>MAX34460 CRC</td><td {VS}>{max34460}</td></tr>')
+        if zl_fw or zl_cfg:
+            zl_hr = ''
+            if zl_fw:  zl_hr += f'<td {KS}>ZL30733 FW</td><td {VS}>{zl_fw}</td>'
+            if zl_cfg: zl_hr += f'<td {KS}>ZL30733 Cfg</td><td {VS}>{zl_cfg}</td>'
+            hr.append(f'<tr>{zl_hr}</tr>')
+        if gnss:
+            hr.append(f'<tr><td {KS}>GNSS</td><td {VS}>{gnss}</td></tr>')
         if lua_sha1:
             date_cp2 = lua_date_short(lua_dt) if lua_dt else ''
             VS2 = ('style="font-size:.8rem;font-family:Consolas,monospace;'
