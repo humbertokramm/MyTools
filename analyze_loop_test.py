@@ -766,16 +766,30 @@ new Chart(document.getElementById('ch'), {{
 }})();
 
 // ── DUT copy ──────────────────────────────────────────────────────────────────
+const DUT_HTML = {dut_copy_html_js};
 const DUT_TEXT = {dut_copy_text_js};
 function copyDUT(btn) {{
-  navigator.clipboard.writeText(DUT_TEXT).then(() => {{
+  const flash = () => {{
     const orig = btn.textContent;
     btn.textContent = '✓ Copiado!';
     btn.classList.add('copied');
     setTimeout(() => {{ btn.textContent = orig; btn.classList.remove('copied'); }}, 1800);
-  }}).catch(() => {{
-    prompt('Copie o texto abaixo:', DUT_TEXT);
-  }});
+  }};
+  // Preferência: ClipboardItem com HTML + texto (editores ricos pegam a tabela)
+  // Fallback 1: writeText simples. Fallback 2: prompt para copiar manualmente.
+  try {{
+    const item = new ClipboardItem({{
+      'text/html':  new Blob([DUT_HTML], {{type: 'text/html'}}),
+      'text/plain': new Blob([DUT_TEXT], {{type: 'text/plain'}}),
+    }});
+    navigator.clipboard.write([item]).then(flash).catch(() =>
+      navigator.clipboard.writeText(DUT_TEXT).then(flash)
+        .catch(() => prompt('Copie o texto abaixo:', DUT_TEXT))
+    );
+  }} catch(e) {{
+    navigator.clipboard.writeText(DUT_TEXT).then(flash)
+      .catch(() => prompt('Copie o texto abaixo:', DUT_TEXT));
+  }}
 }}
 </script>
 </body>
@@ -958,6 +972,60 @@ def build(loops, filepath, sensor_keys, ref_ok):
                 f'</tr>'
             )
 
+        # ── HTML table for clipboard (inline styles — sem depender de CSS externo) ─
+        KS = ('style="font-size:.8rem;color:#888;white-space:nowrap;'
+              'padding:2px 4px 2px 8px;text-align:right"')
+        VS = ('style="font-size:.85rem;font-family:Consolas,monospace;'
+              'padding:2px 12px 2px 4px"')
+        hr = []
+        if mb_product:
+            hr.append(
+                f'<tr><td {KS}>Mainboard</td><td {VS}>{mb_product}</td>'
+                f'<td {KS}>PN</td><td {VS}>{mb_pn or "-"}</td>'
+                f'<td {KS}>SN</td><td {VS}>{sn or "-"}</td>'
+                f'<td {KS}>MAC</td><td {VS}>{mac or "-"}</td></tr>'
+            )
+        if fpga_date:
+            hr.append(f'<tr><td {KS}>FPGA</td><td {VS} colspan="7">{fpga_date}</td></tr>')
+        if psu_dc_mdl:
+            hr.append(
+                f'<tr><td {KS}>PSU DC</td><td {VS}>{psu_dc_mdl}</td>'
+                f'<td {KS}>S/N</td><td {VS} colspan="5">{psu_dc_sn_ or "-"}</td></tr>'
+            )
+        if psu_ac_mdl:
+            hr.append(
+                f'<tr><td {KS}>PSU AC</td><td {VS}>{psu_ac_mdl}</td>'
+                f'<td {KS}>S/N</td><td {VS} colspan="5">{psu_ac_sn_ or "-"}</td></tr>'
+            )
+        for tidx in sorted(fan_trays_global):
+            t = fan_trays_global[tidx]
+            hr.append(
+                f'<tr><td {KS}>FAN Tray {tidx}</td><td {VS}>{t["pn"]}</td>'
+                f'<td {KS}>SN</td><td {VS}>{t["sn"]}</td>'
+                f'<td {KS}>HV</td><td {VS}>{t["hv"]}</td></tr>'
+            )
+        fw_hr = []
+        if max34460: fw_hr.append(f'<td {KS}>MAX34460 CRC</td><td {VS}>{max34460}</td>')
+        if zl_fw:    fw_hr.append(f'<td {KS}>ZL30733 FW</td><td {VS}>{zl_fw}</td>')
+        if zl_cfg:   fw_hr.append(f'<td {KS}>ZL30733 Cfg</td><td {VS}>{zl_cfg}</td>')
+        if gnss:     fw_hr.append(f'<td {KS}>GNSS</td><td {VS}>{gnss}</td>')
+        if fw_hr:
+            hr.append(f'<tr>{"".join(fw_hr)}</tr>')
+        if lua_sha1:
+            date_cp2 = lua_date_short(lua_dt) if lua_dt else ''
+            VS2 = ('style="font-size:.8rem;font-family:Consolas,monospace;'
+                   'padding:2px 12px 2px 4px"')
+            hr.append(
+                f'<tr><td {KS}>Lua commit</td>'
+                f'<td {VS2} colspan="5">{lua_sha1}</td>'
+                f'<td {KS}>data</td><td {VS}>{date_cp2}</td></tr>'
+            )
+        dut_copy_html_js = json.dumps(
+            '<table style="border-collapse:separate;border-spacing:4px 3px">'
+            '<tbody>' + ''.join(hr) + '</tbody></table>',
+            ensure_ascii=False
+        )
+
         dut_info_html = (
             '<div class="box">'
             '<div class="box-hdr">'
@@ -971,6 +1039,7 @@ def build(loops, filepath, sensor_keys, ref_ok):
     else:
         dut_info_html    = ''
         dut_copy_text_js = '""'
+        dut_copy_html_js = '""'
 
     times = [l['login_time'] for l in loops if l['login_time']]
     date_range = (f"{min(times).strftime('%d/%m/%Y %H:%M')} &rarr; "
@@ -1125,6 +1194,7 @@ def build(loops, filepath, sensor_keys, ref_ok):
         n_boot_fail      = n_boot_fail,
         dut_info_html    = dut_info_html,
         dut_copy_text_js = dut_copy_text_js,
+        dut_copy_html_js = dut_copy_html_js,
         boot_anomaly_html= boot_anomaly_html,
         tl_rows          = '\n'.join(tl),
         sensor_headers   = sensor_hdrs,
