@@ -589,6 +589,12 @@ td.boot-unknown{{color:#9e9e9e}}
 .dut-tbl td{{padding:1px 4px;border:none;background:transparent}}
 .dk{{font-size:.72rem;color:#888;white-space:nowrap;text-align:right}}
 .dv{{font-size:.82rem;font-family:'Consolas',monospace;color:#1a1a2e;padding-right:14px}}
+.box-hdr{{display:flex;align-items:center;justify-content:space-between;
+          margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #eee}}
+.box-hdr h2{{margin-bottom:0;padding-bottom:0;border-bottom:none;font-size:.95rem;color:#333}}
+.btn-copy{{font-size:.72rem;padding:3px 11px;border:1px solid #d0d0d0;border-radius:4px;
+           background:#fafafa;color:#666;cursor:pointer;transition:all .15s;white-space:nowrap}}
+.btn-copy:hover,.btn-copy.copied{{background:#e8f5e9;border-color:#2e7d32;color:#2e7d32}}
 </style>
 </head>
 <body>
@@ -758,6 +764,19 @@ new Chart(document.getElementById('ch'), {{
     }}
   }});
 }})();
+
+// ── DUT copy ──────────────────────────────────────────────────────────────────
+const DUT_TEXT = {dut_copy_text_js};
+function copyDUT(btn) {{
+  navigator.clipboard.writeText(DUT_TEXT).then(() => {{
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copiado!';
+    btn.classList.add('copied');
+    setTimeout(() => {{ btn.textContent = orig; btn.classList.remove('copied'); }}, 1800);
+  }}).catch(() => {{
+    prompt('Copie o texto abaixo:', DUT_TEXT);
+  }});
+}}
 </script>
 </body>
 </html>
@@ -837,6 +856,40 @@ def build(loops, filepath, sensor_keys, ref_ok):
         for tidx, tdata in l.get('fan_trays', {}).items():
             fan_trays_global.setdefault(tidx, tdata)
 
+    # ── Plain-text payload for the "Copy" button ────────────────────────────
+    copy_lines = []
+    dt_min = min((l['login_time'] for l in loops if l['login_time']), default=None)
+    dt_max = max((l['login_time'] for l in loops if l['login_time']), default=None)
+    dr_plain = (f"{dt_min.strftime('%d/%m/%Y %H:%M')} -> {dt_max.strftime('%H:%M')}"
+                if dt_min else '-')
+    fail_loops = [str(i+1) for i, l in enumerate(loops) if loop_status(l) == 'fail']
+    fail_str   = (f" — falhas: Loop {', '.join(fail_loops)}" if fail_loops else
+                  f" — sem falhas")
+    copy_lines.append(f"{product} — {len(loops)} loops — {dr_plain}{fail_str}")
+
+    if mb_product:
+        copy_lines.append(f"{mb_product}  PN {mb_pn or '-'}  SN {sn or '-'}  MAC {mac or '-'}")
+    if fpga_date:
+        copy_lines.append(f"FPGA: {fpga_date}")
+    if psu_dc_mdl:
+        copy_lines.append(f"PSU DC: {psu_dc_mdl}  S/N {psu_dc_sn_ or '-'}")
+    if psu_ac_mdl:
+        copy_lines.append(f"PSU AC: {psu_ac_mdl}  S/N {psu_ac_sn_ or '-'}")
+    for tidx in sorted(fan_trays_global):
+        t = fan_trays_global[tidx]
+        copy_lines.append(f"FAN Tray {tidx}: {t['pn']}  SN {t['sn']}  HV {t['hv']}")
+    fw_parts_txt = []
+    if max34460: fw_parts_txt.append(f"MAX34460: {max34460}")
+    if zl_fw:    fw_parts_txt.append(f"ZL30733 FW: {zl_fw}")
+    if zl_cfg:   fw_parts_txt.append(f"ZL30733 Cfg: {zl_cfg}")
+    if gnss:     fw_parts_txt.append(f"GNSS: {gnss}")
+    if fw_parts_txt:
+        copy_lines.append("  ".join(fw_parts_txt))
+    if lua_sha1:
+        date_cp = lua_date_short(lua_dt) if lua_dt else ''
+        copy_lines.append(f"Lua: {lua_sha1}" + (f"  ({date_cp})" if date_cp else ""))
+    dut_copy_text_js = json.dumps("\n".join(copy_lines), ensure_ascii=False)
+
     if any([mb_product, psu_dc_mdl, psu_ac_mdl, fan_trays_global,
             max34460, zl_fw, gnss, lua_sha1]):
         rows = []
@@ -907,13 +960,17 @@ def build(loops, filepath, sensor_keys, ref_ok):
 
         dut_info_html = (
             '<div class="box">'
+            '<div class="box-hdr">'
             '<h2>Identificação do DUT</h2>'
+            '<button class="btn-copy" onclick="copyDUT(this)">📋 Copiar</button>'
+            '</div>'
             '<table class="dut-tbl"><tbody>'
             + ''.join(rows) +
             '</tbody></table></div>'
         )
     else:
-        dut_info_html = ''
+        dut_info_html    = ''
+        dut_copy_text_js = '""'
 
     times = [l['login_time'] for l in loops if l['login_time']]
     date_range = (f"{min(times).strftime('%d/%m/%Y %H:%M')} &rarr; "
@@ -1067,6 +1124,7 @@ def build(loops, filepath, sensor_keys, ref_ok):
         boot_card_cls    = boot_card_cls,
         n_boot_fail      = n_boot_fail,
         dut_info_html    = dut_info_html,
+        dut_copy_text_js = dut_copy_text_js,
         boot_anomaly_html= boot_anomaly_html,
         tl_rows          = '\n'.join(tl),
         sensor_headers   = sensor_hdrs,
