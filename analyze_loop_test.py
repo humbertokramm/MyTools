@@ -37,6 +37,20 @@ from pathlib import Path
 TS_RE       = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]')
 TS_STRIP_RE = re.compile(r'^\[[^\]]{10,30}\]\s*')  # remove Tera Term timestamp prefix
 
+# ── DUT identification patterns ────────────────────────────────────────────────
+# "DM4780 12CX+4DX - 800.5332.50 - 7444888"  (printed by rebootTF.lua after ft_card_init)
+MAINBOARD_IDENT_RE = re.compile(
+    r'\]\s*(DM[\w\s+]*?)\s+-\s+(\d{3}\.\d{4}\.\d+)\s+-\s+(\d+)'
+)
+PSU_DC_RE   = re.compile(r'PSU DC:\s+(\S+)\s+(.*\S)')
+PSU_AC_RE   = re.compile(r'PSU AC:\s+(\S+)\s+(.*\S)')
+FAN_TRAY_RE  = re.compile(r'FAN Tray (\d+):\s+([\d.]+)\s+-\s+(\d+),\s*HV\s*=\s*(\d+)')
+MAX34460_RE  = re.compile(r'MAX34460 CRC read (0x[0-9A-Fa-f]+)')
+ZL_FW_RE     = re.compile(r'ZL30733.*Device Firmware Version read (0x[0-9A-Fa-f]+)')
+ZL_CFG_RE    = re.compile(r'Device Custom Config Version read (0x[0-9A-Fa-f]+)')
+GNSS_VER_RE  = re.compile(r'Device Firmware Version read (LC\w+)\s+correctly')
+FPGA_DATE_RE = re.compile(r'Mainboard FPGA Release Date:\s*(.+)')
+
 def parse_ts(line):
     m = TS_RE.match(line)
     return datetime.strptime(m.group(1), '%Y-%m-%d %H:%M:%S.%f') if m else None
@@ -257,19 +271,31 @@ def parse_log(filepath):
                 loops.append(cur)
             hostname = re.search(r'\]\s*([\w][\w\d._-]*)\s+login:', line)
             cur = dict(
-                device        = hostname.group(1) if hostname else 'unknown',
-                login_time    = ts,
-                test_start    = None,
-                end_time      = None,
-                sensors       = {},
-                errors        = [],
-                in_report     = False,
-                serial_number = None,
-                mac_address   = None,
-                lua_commit    = None,
-                lua_date      = None,
-                boot_lines    = boot_buf[:],   # captured before reset
-                _lines        = [],
+                device            = hostname.group(1) if hostname else 'unknown',
+                login_time        = ts,
+                test_start        = None,
+                end_time          = None,
+                sensors           = {},
+                errors            = [],
+                in_report         = False,
+                serial_number     = None,
+                mac_address       = None,
+                lua_commit        = None,
+                lua_date          = None,
+                boot_lines        = boot_buf[:],   # captured before reset
+                _lines            = [],
+                mainboard_product = None,
+                mainboard_pn      = None,
+                psu_dc_model      = None,
+                psu_dc_sn         = None,
+                psu_ac_model      = None,
+                psu_ac_sn         = None,
+                fan_trays         = {},
+                max34460_crc      = None,
+                zl30733_fw        = None,
+                zl30733_cfg       = None,
+                gnss_ver          = None,
+                fpga_date         = None,
             )
             boot_buf       = []
             in_boot        = False
@@ -314,9 +340,67 @@ def parse_log(filepath):
                 cur['serial_number'] = m.group(1)
                 cur['mac_address']   = m.group(2)
 
+        # ── DUT identification block ──────────────────────────────────────────
+        # Mainboard: "DM4780 12CX+4DX - 800.5332.50 - 7444888"
+        if cur['mainboard_product'] is None:
+            m = MAINBOARD_IDENT_RE.search(line)
+            if m:
+                cur['mainboard_product'] = m.group(1).strip()
+                cur['mainboard_pn']      = m.group(2)
+
+        # PSU DC / AC
+        if cur['psu_dc_model'] is None:
+            m = PSU_DC_RE.search(line)
+            if m:
+                cur['psu_dc_model'] = m.group(1).strip()
+                cur['psu_dc_sn']    = m.group(2).strip()
+
+        if cur['psu_ac_model'] is None:
+            m = PSU_AC_RE.search(line)
+            if m:
+                cur['psu_ac_model'] = m.group(1).strip()
+                cur['psu_ac_sn']    = m.group(2).strip()
+
+        # FAN Trays (matches both "[Info]    FAN Tray N:" and bare "FAN Tray N:")
+        m = FAN_TRAY_RE.search(line)
+        if m:
+            tray = int(m.group(1))
+            if tray not in cur['fan_trays']:
+                cur['fan_trays'][tray] = {
+                    'pn': m.group(2),
+                    'sn': int(m.group(3)),
+                    'hv': int(m.group(4)),
+                }
+
+        # ── Firmware / hardware version fields ───────────────────────────────
+        if cur['max34460_crc'] is None:
+            m = MAX34460_RE.search(line)
+            if m:
+                cur['max34460_crc'] = m.group(1)
+
+        if cur['zl30733_fw'] is None:
+            m = ZL_FW_RE.search(line)
+            if m:
+                cur['zl30733_fw'] = m.group(1)
+
+        if cur['zl30733_cfg'] is None:
+            m = ZL_CFG_RE.search(line)
+            if m:
+                cur['zl30733_cfg'] = m.group(1)
+
+        if cur['gnss_ver'] is None:
+            m = GNSS_VER_RE.search(line)
+            if m:
+                cur['gnss_ver'] = m.group(1)
+
+        if cur['fpga_date'] is None:
+            m = FPGA_DATE_RE.search(line)
+            if m:
+                cur['fpga_date'] = m.group(1).strip()
+
         # ── Lua Version block (3-line state machine) ──────────────────────────
         # Line 1: "Lua Version"
-        # Line 2: "commit       cb81f8ae... (SHA1)"
+        # Line 2: "commit       cb81f8ae... (SHA1)"   — stored full SHA-1
         # Line 3: "AuthorDate:  Thu May 14 09:22:34 2026 -0300"
         if lua_state == 0:
             if re.search(r'\bLua Version\b', line):
@@ -324,7 +408,7 @@ def parse_log(filepath):
         elif lua_state == 1:
             m = re.search(r'commit\s+([0-9a-f]{7,40})', line, re.IGNORECASE)
             if m:
-                lua_commit_tmp = m.group(1)[:8]   # keep short SHA
+                lua_commit_tmp = m.group(1)   # full SHA-1 (truncated only for display)
                 lua_state = 2
             else:
                 lua_state = 0  # unexpected line — reset
@@ -501,6 +585,10 @@ td.boot-unknown{{color:#9e9e9e}}
 .boot-list{{font-size:.8rem;color:#555;margin:10px 0 0 4px;list-style:disc inside}}
 .boot-list li{{margin-bottom:3px}}
 .info-ok{{font-size:.82rem;color:#2e7d32;margin-top:8px}}
+.dut-tbl{{width:auto;border-collapse:separate;border-spacing:6px 5px;margin-top:-4px}}
+.dut-tbl td{{padding:1px 4px;border:none;background:transparent}}
+.dk{{font-size:.72rem;color:#888;white-space:nowrap;text-align:right}}
+.dv{{font-size:.82rem;font-family:'Consolas',monospace;color:#1a1a2e;padding-right:14px}}
 </style>
 </head>
 <body>
@@ -515,6 +603,8 @@ td.boot-unknown{{color:#9e9e9e}}
     <div class="card fail"><div class="v">{n_fail}</div><div class="l">Falha critica</div></div>
     <div class="card {boot_card_cls}"><div class="v">{n_boot_fail}</div><div class="l">Boot anomalo</div></div>
   </div>
+
+  {dut_info_html}
 
   <div class="box">
     <h2>Temperaturas ao longo do tempo</h2>
@@ -714,14 +804,116 @@ def build(loops, filepath, sensor_keys, ref_ok):
         extra_parts.append(f'MAC: {mac}')
     if lua_first:
         date_str = lua_date_short(lua_first[2]) if lua_first[2] else ''
+        sha_short_first = lua_first[1][:8]
+        sha_short_last  = lua_last[1][:8]  if lua_last  else sha_short_first
         if lua_transitions:
-            # Show transition: v1 → v2
-            lua_label = (f'Lua: {lua_first[1]} &rarr; {lua_last[1]}'
+            lua_label = (f'Lua: {sha_short_first} &rarr; {sha_short_last}'
                          f'<span style="color:#e65100;font-weight:600"> (atualizado)</span>')
         else:
-            lua_label = f'Lua: {lua_first[1]}' + (f' ({date_str})' if date_str else '')
+            lua_label = f'Lua: {sha_short_first}' + (f' ({date_str})' if date_str else '')
         extra_parts.append(lua_label)
     extra_info = (' &nbsp;|&nbsp; ' + ' &nbsp;|&nbsp; '.join(extra_parts)) if extra_parts else ''
+
+    # ── DUT identification card ──────────────────────────────────────────────
+    def _first(key):
+        return next((l[key] for l in loops if l.get(key)), None)
+
+    mb_product  = _first('mainboard_product')
+    mb_pn       = _first('mainboard_pn')
+    psu_dc_mdl  = _first('psu_dc_model')
+    psu_dc_sn_  = _first('psu_dc_sn')
+    psu_ac_mdl  = _first('psu_ac_model')
+    psu_ac_sn_  = _first('psu_ac_sn')
+    max34460    = _first('max34460_crc')
+    zl_fw       = _first('zl30733_fw')
+    zl_cfg      = _first('zl30733_cfg')
+    gnss        = _first('gnss_ver')
+    fpga_date   = _first('fpga_date')
+    lua_sha1    = _first('lua_commit')        # full SHA-1
+    lua_dt      = _first('lua_date')
+
+    fan_trays_global = {}
+    for l in loops:
+        for tidx, tdata in l.get('fan_trays', {}).items():
+            fan_trays_global.setdefault(tidx, tdata)
+
+    if any([mb_product, psu_dc_mdl, psu_ac_mdl, fan_trays_global,
+            max34460, zl_fw, gnss, lua_sha1]):
+        rows = []
+
+        # ── Hardware ──────────────────────────────────────────────────────────
+        if mb_product:
+            rows.append(
+                f'<tr>'
+                f'<td class="dk">Mainboard</td><td class="dv">{mb_product}</td>'
+                f'<td class="dk">PN</td><td class="dv">{mb_pn or "-"}</td>'
+                f'<td class="dk">SN</td><td class="dv">{sn or "-"}</td>'
+                f'<td class="dk">MAC</td><td class="dv">{mac or "-"}</td>'
+                f'</tr>'
+            )
+        if fpga_date:
+            rows.append(
+                f'<tr>'
+                f'<td class="dk">FPGA</td><td class="dv" colspan="7">{fpga_date}</td>'
+                f'</tr>'
+            )
+        if psu_dc_mdl:
+            rows.append(
+                f'<tr>'
+                f'<td class="dk">PSU DC</td><td class="dv">{psu_dc_mdl}</td>'
+                f'<td class="dk">S/N</td><td class="dv" colspan="5">{psu_dc_sn_ or "-"}</td>'
+                f'</tr>'
+            )
+        if psu_ac_mdl:
+            rows.append(
+                f'<tr>'
+                f'<td class="dk">PSU AC</td><td class="dv">{psu_ac_mdl}</td>'
+                f'<td class="dk">S/N</td><td class="dv" colspan="5">{psu_ac_sn_ or "-"}</td>'
+                f'</tr>'
+            )
+        for tidx in sorted(fan_trays_global):
+            t = fan_trays_global[tidx]
+            rows.append(
+                f'<tr>'
+                f'<td class="dk">FAN Tray {tidx}</td><td class="dv">{t["pn"]}</td>'
+                f'<td class="dk">SN</td><td class="dv">{t["sn"]}</td>'
+                f'<td class="dk">HV</td><td class="dv">{t["hv"]}</td>'
+                f'</tr>'
+            )
+
+        # ── Firmware ──────────────────────────────────────────────────────────
+        fw_parts = []
+        if max34460:
+            fw_parts.append(f'<td class="dk">MAX34460 CRC</td><td class="dv">{max34460}</td>')
+        if zl_fw:
+            fw_parts.append(f'<td class="dk">ZL30733 FW</td><td class="dv">{zl_fw}</td>')
+        if zl_cfg:
+            fw_parts.append(f'<td class="dk">ZL30733 Cfg</td><td class="dv">{zl_cfg}</td>')
+        if gnss:
+            fw_parts.append(f'<td class="dk">GNSS</td><td class="dv">{gnss}</td>')
+        if fw_parts:
+            rows.append(f'<tr>{"".join(fw_parts)}</tr>')
+
+        # ── Lua ───────────────────────────────────────────────────────────────
+        if lua_sha1:
+            date_disp = lua_date_short(lua_dt) if lua_dt else ''
+            rows.append(
+                f'<tr>'
+                f'<td class="dk">Lua commit</td>'
+                f'<td class="dv" colspan="5" style="font-size:.78rem">{lua_sha1}</td>'
+                f'<td class="dk">data</td><td class="dv">{date_disp}</td>'
+                f'</tr>'
+            )
+
+        dut_info_html = (
+            '<div class="box">'
+            '<h2>Identificação do DUT</h2>'
+            '<table class="dut-tbl"><tbody>'
+            + ''.join(rows) +
+            '</tbody></table></div>'
+        )
+    else:
+        dut_info_html = ''
 
     times = [l['login_time'] for l in loops if l['login_time']]
     date_range = (f"{min(times).strftime('%d/%m/%Y %H:%M')} &rarr; "
@@ -792,7 +984,7 @@ def build(loops, filepath, sensor_keys, ref_ok):
 
         # Lua version change tag
         if i in lua_transitions:
-            new_commit = l.get('lua_commit', '?')
+            new_commit = l.get('lua_commit', '?')[:8]
             new_date   = lua_date_short(l.get('lua_date', '')) if l.get('lua_date') else ''
             lua_tag = (f'<span class="tag bk-warn">'
                        f'Lua atualizado: {new_commit}'
@@ -846,7 +1038,7 @@ def build(loops, filepath, sensor_keys, ref_ok):
 
         # Lua version change pill (only at transition loops)
         if i in lua_transitions:
-            lua_pill = f'<span class="pill warn">Lua {l.get("lua_commit","?")}</span> '
+            lua_pill = f'<span class="pill warn">Lua {l.get("lua_commit","?")[:8]}</span> '
         else:
             lua_pill = ''
 
@@ -874,6 +1066,7 @@ def build(loops, filepath, sensor_keys, ref_ok):
         extra_info       = extra_info,
         boot_card_cls    = boot_card_cls,
         n_boot_fail      = n_boot_fail,
+        dut_info_html    = dut_info_html,
         boot_anomaly_html= boot_anomaly_html,
         tl_rows          = '\n'.join(tl),
         sensor_headers   = sensor_hdrs,
