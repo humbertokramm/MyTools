@@ -281,7 +281,7 @@ def start_gui(IP, PORT):
                     tk.Button(
                         linha,
                         text="Auto (TeraTerm)",
-                        command=lambda a=arquivo: executar_macro(a,host,porta)
+                        command=lambda: executar_macro("latest.bin",host,porta)
                     ).pack(side="left", padx=5)
 
             # cria as 3 linhas

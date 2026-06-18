@@ -2,7 +2,9 @@ import urllib.request
 import urllib.parse
 import re
 import os
+import shutil
 import ssl
+from datetime import datetime
 
 
 FPGA_LIST_URL = (
@@ -213,6 +215,31 @@ def get_latest_remote(tipo, projeto):
 
 
 # -------------------------------
+# latest.bin + log
+# -------------------------------
+def _set_latest_bin(nome, path="."):
+    """Copia nome → latest.bin, remove o anterior e appenda em version_info.txt."""
+    src = os.path.join(path, nome)
+    dst = os.path.join(path, "latest.bin")
+
+    if os.path.exists(dst):
+        os.remove(dst)
+
+    shutil.copy2(src, dst)
+
+    stat = os.stat(src)
+    size_mb = stat.st_size / (1024 * 1024)
+    criado = datetime.fromtimestamp(stat.st_ctime).strftime("%Y-%m-%d %H:%M:%S")
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    log_path = os.path.join(path, "version_info.txt")
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(f"[{agora}] {nome} | {size_mb:.1f} MB | criado: {criado}\n")
+
+    print("latest.bin →", nome)
+
+
+# -------------------------------
 # arquivos locais
 # -------------------------------
 def get_local_bins(path=".", projeto=None):
@@ -292,6 +319,7 @@ def update_local(tipo, projeto, path="."):
             except Exception as e:
                 print("Erro ao remover:", f, e)
 
+    _set_latest_bin(nome, path)
     return True
 
 

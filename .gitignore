@@ -12,3 +12,4 @@ __pycache__/
 *.bin
 *.rbf
 *.zip
+HTTP/version_info.txt
