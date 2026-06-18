@@ -234,7 +234,7 @@ def start_gui(IP, PORT):
 
         arquivos = sorted(
             f for f in os.listdir(".")
-            if os.path.isfile(f) and f.lower().endswith(".bin")
+            if os.path.isfile(f) and f.lower().endswith(".bin") and f != "latest.bin"
         )
 
         for arquivo in arquivos:
