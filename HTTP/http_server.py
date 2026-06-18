@@ -131,16 +131,19 @@ def start_gui(IP, PORT):
 
         status_version.config(text="Verificando...")
 
-        status, arquivo = check_update(tipo, projeto)
+        def task():
+            status, arquivo = check_update(tipo, projeto)
 
-        if status == "OK":
-            status_version.config(text=f"Atualizado: {arquivo}", fg="green")
+            if status == "OK":
+                status_version.config(text=f"Atualizado: {arquivo}", fg="green")
+            elif status == "UPDATE":
+                status_version.config(text=f"Novo disponível: {arquivo}", fg="orange")
+            else:
+                status_version.config(text="Erro ao verificar", fg="red")
 
-        elif status == "UPDATE":
-            status_version.config(text=f"Novo disponível: {arquivo}", fg="orange")
+            atualizar_lista()
 
-        else:
-            status_version.config(text="Erro ao verificar", fg="red")
+        threading.Thread(target=task, daemon=True).start()
 
     def atualizar():
 
@@ -199,6 +202,7 @@ def start_gui(IP, PORT):
                 status_fpga.config(text=f"Novo disponível: {arquivo}", fg="orange")
             else:
                 status_fpga.config(text="Erro ao verificar", fg="red")
+            atualizar_lista()
         threading.Thread(target=task, daemon=True).start()
 
     def atualizar_fpga():
