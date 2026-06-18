@@ -13,3 +13,4 @@ __pycache__/
 *.rbf
 *.zip
 HTTP/version_info.txt
+HTTP/http_server_config.json
