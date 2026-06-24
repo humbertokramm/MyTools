@@ -46,11 +46,12 @@ if "%PROJETO%"=="" (
 )
 
 echo.
-echo Conectando à VM e compilando "%PROJETO%"...
+echo Rodando o script e compilando "%PROJETO%"...
 echo.
 
-ssh humberto.kramm@172.26.27.37 "bash -l -c 'lua ~/makelua.lua %PROJETO%'"
+::ssh humberto.kramm@172.26.27.37 "bash -l -c 'lua ~/makelua.lua %PROJETO%'"
 
+python C:\Projetos\platf-scripts-lua\.claude\scripts\lua_tar_gen.py -p %PROJETO%
 
 echo.
 echo Organizando arquivos gerados...
