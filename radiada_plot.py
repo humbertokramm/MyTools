@@ -262,17 +262,21 @@ def analyze(eut_path, amb_path, limit_path=None):
 
     # ── SpanSelector  ΔF ────────────────────────────────────────────────
     fig._span_text = None
+    fig._span_rect = None
 
     def on_span(xmin, xmax):
-        df = xmax - xmin
-        if abs(df) < 1e-9:
+        if abs(xmax - xmin) < 1e-9:
             return
-        if fig._span_text is not None:
-            try:
-                fig._span_text.remove()
-            except Exception:
-                pass
+        for attr in ('_span_text', '_span_rect'):
+            obj = getattr(fig, attr)
+            if obj is not None:
+                try:
+                    obj.remove()
+                except Exception:
+                    pass
         ymid = ax.get_ylim()[1]
+        fig._span_rect = ax.axvspan(xmin, xmax, alpha=0.15,
+                                    color='steelblue', zorder=1)
         fig._span_text = ax.text(
             np.sqrt(xmin * xmax), ymid, _fmt_span(xmin, xmax),
             ha='center', va='top', fontsize=10, fontweight='bold',
@@ -284,12 +288,14 @@ def analyze(eut_path, amb_path, limit_path=None):
 
     def on_dblclick(event):
         if event.dblclick and event.inaxes is ax:
-            if fig._span_text is not None:
-                try:
-                    fig._span_text.remove()
-                except Exception:
-                    pass
-                fig._span_text = None
+            for attr in ('_span_text', '_span_rect'):
+                obj = getattr(fig, attr)
+                if obj is not None:
+                    try:
+                        obj.remove()
+                    except Exception:
+                        pass
+                    setattr(fig, attr, None)
             fig.canvas.draw()
 
     fig._span = SpanSelector(ax, on_span, 'horizontal', useblit=False,
