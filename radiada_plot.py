@@ -155,10 +155,18 @@ def _print_peaks(freq_mhz, net, lim, peaks):
 # Plot
 # -----------------------------------------------------------------------
 
-def _fmt_df(df):
-    if df >= 1:      return f"ΔF = {df:.4g} MHz"
-    if df >= 1e-3:   return f"ΔF = {df*1e3:.4g} kHz"
-    return               f"ΔF = {df*1e6:.4g} Hz"
+def _fmt_freq(f):
+    if f >= 1000:    return f"{f:.6g} GHz" if f >= 1000 else f"{f:.6g} MHz"
+    if f >= 1:       return f"{f:.6g} MHz"
+    if f >= 1e-3:    return f"{f*1e3:.6g} kHz"
+    return                  f"{f*1e6:.6g} Hz"
+
+def _fmt_span(fmin, fmax):
+    df = fmax - fmin
+    if df >= 1:      delta = f"ΔF = {df:.4g} MHz"
+    elif df >= 1e-3: delta = f"ΔF = {df*1e3:.4g} kHz"
+    else:            delta = f"ΔF = {df*1e6:.4g} Hz"
+    return f"{_fmt_freq(fmin)}  →  {_fmt_freq(fmax)}\n{delta}"
 
 
 def analyze(eut_path, amb_path, limit_path=None):
@@ -266,7 +274,7 @@ def analyze(eut_path, amb_path, limit_path=None):
                 pass
         ymid = ax.get_ylim()[1]
         fig._span_text = ax.text(
-            np.sqrt(xmin * xmax), ymid, _fmt_df(df),
+            np.sqrt(xmin * xmax), ymid, _fmt_span(xmin, xmax),
             ha='center', va='top', fontsize=10, fontweight='bold',
             bbox=dict(boxstyle='round,pad=0.3', facecolor='steelblue',
                       alpha=0.85, edgecolor='none'),
