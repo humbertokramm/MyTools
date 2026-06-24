@@ -1,12 +1,17 @@
 """
-radiada_plot.py  —  Análise de emissão radiada (Agilent N9010A CSV)
+radiada_plot.py  --  Analise de emissao radiada (Agilent N9010A CSV)
 
-Uso:
+Uso -- arquivo unico:
     python radiada_plot.py <eut.csv> <amb.csv> [<limit.csv>]
+
+Uso -- combinar sub-bandas (glob pattern):
+    python radiada_plot.py "*EUT*.csv" "*Ambiente*.csv" [<limit.csv>]
+    python radiada_plot.py "C:/pasta/*EUT*.csv" "C:/pasta/*Ambiente*.csv" limit.csv
 """
 
 import sys
 import os
+import glob
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -49,6 +54,59 @@ def _parse_limit(path):
     """Retorna (freq_hz, lim_dbuv) de um CSV de limite Agilent (X eixo em MHz)."""
     _, freq_mhz, lim = _parse_csv(path)
     return freq_mhz * 1e6, lim
+
+
+# -----------------------------------------------------------------------
+# Multi-file stitch
+# -----------------------------------------------------------------------
+
+def _resolve_paths(pattern):
+    """Expande glob pattern ou retorna lista com o arquivo unico."""
+    if '*' in pattern or '?' in pattern:
+        paths = sorted(glob.glob(pattern))
+        if not paths:
+            raise FileNotFoundError('Nenhum arquivo encontrado para: ' + pattern)
+        return paths
+    return [pattern]
+
+
+def stitch_csvs(paths):
+    """Combina multiplos CSVs de sub-bandas em um unico trace.
+
+    Os arquivos sao ordenados pela frequencia inicial e concatenados.
+    Retorna (meta, freq_hz, amp_dbuv) como _parse_csv, porem com
+    resolucao equivalente a soma de todos os segmentos.
+    """
+    segments = []
+    for p in paths:
+        meta, f, a = _parse_csv(p)
+        segments.append((f[0], f, a, meta))
+
+    segments.sort(key=lambda s: s[0])
+
+    all_freq = np.concatenate([s[1] for s in segments])
+    all_amp  = np.concatenate([s[2] for s in segments])
+
+    # usa metadata do primeiro segmento como base
+    base_meta = segments[0][3].copy()
+    base_meta['Start Frequency'] = str(all_freq[0])
+    base_meta['Stop Frequency']  = str(all_freq[-1])
+    base_meta['Number of Points'] = str(len(all_freq))
+    base_meta['_stitched'] = str(len(segments)) + ' segmentos'
+
+    print('Stitched: {} arquivos, {} pontos  ({:.0f}-{:.0f} MHz)'.format(
+        len(segments), len(all_freq),
+        all_freq[0] / 1e6, all_freq[-1] / 1e6
+    ))
+    return base_meta, all_freq, all_amp
+
+
+def _load_trace(path_or_pattern):
+    """Carrega um trace: arquivo unico ou multiplos por glob."""
+    paths = _resolve_paths(path_or_pattern)
+    if len(paths) == 1:
+        return _parse_csv(paths[0])
+    return stitch_csvs(paths)
 
 
 def _interp_limit(freq_hz, lim_freq_hz, lim_amp):
@@ -104,8 +162,8 @@ def _fmt_df(df):
 
 
 def analyze(eut_path, amb_path, limit_path=None):
-    _, f_eut, a_eut = _parse_csv(eut_path)
-    _, f_amb, a_amb = _parse_csv(amb_path)
+    _, f_eut, a_eut = _load_trace(eut_path)
+    _, f_amb, a_amb = _load_trace(amb_path)
 
     if not np.array_equal(f_eut, f_amb):
         a_amb = np.interp(f_eut, f_amb, a_amb)
@@ -162,9 +220,9 @@ def analyze(eut_path, amb_path, limit_path=None):
     ))
     ax.xaxis.set_minor_formatter(ticker.NullFormatter())
 
-    eut_name = os.path.basename(eut_path)
-    amb_name = os.path.basename(amb_path)
-    ax.set_title(f'Emissão Radiada  —  {eut_name}  vs  {amb_name}', color='#eeeeee')
+    eut_label = os.path.basename(eut_path) if '*' not in eut_path else eut_path
+    amb_label = os.path.basename(amb_path) if '*' not in amb_path else amb_path
+    ax.set_title('Emissao Radiada  --  ' + eut_label + '  vs  ' + amb_label, color='#eeeeee')
     ax.set_xlabel('Frequência (MHz)')
     ax.set_ylabel('Amplitude (dBuV)')
     ax.grid(True, which='major', color=GRID, lw=0.8)
@@ -240,7 +298,9 @@ def analyze(eut_path, amb_path, limit_path=None):
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print(f"Uso: python {sys.argv[0]} <eut.csv> <amb.csv> [<limit.csv>]")
+        print("Uso: python " + sys.argv[0] + " <eut.csv|pattern> <amb.csv|pattern> [<limit.csv>]")
+        print("  arquivo unico : python radiada_plot.py eut.csv amb.csv limit.csv")
+        print("  sub-bandas    : python radiada_plot.py \"*EUT*.csv\" \"*Ambiente*.csv\" limit.csv")
         sys.exit(1)
 
     eut_path   = sys.argv[1]
