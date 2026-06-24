@@ -6,14 +6,16 @@ from agilent_sa import AgilentSA
 
 
 class SA:
-    """Facade para analisadores de espectro, similar ao Scope para osciloscópios.
+    """Facade para analisadores de espectro.
+
+    Compativel com Python 3.4+ (sem f-strings, sem numpy).
+    Unica dependencia: pyvisa.
 
     Uso:
         sa = SA('TCPIP0::192.168.0.30::inst0::INSTR')
-        sa.load_state(r'D:/State/Setup_EMC.state')
+        sa.load_state('D:/State/Setup_EMC.state')
         sa.set_average(100)
         sa.sweep_single()
-        freq, amp, meta = sa.capture_trace('Trace1')
         sa.export_csv('Trace1', 'eut_H.csv')
         img = sa.capture_screen()
         open('tela.png', 'wb').write(img)
@@ -24,17 +26,10 @@ class SA:
             ...
     """
 
-    def __init__(self, resource=None, debug=False, overwrite=False):
+    def __init__(self, resource, debug=False, overwrite=False):
         self.overwrite = overwrite
         self.inst = None
         self.rm   = None
-
-        if resource is None:
-            try:
-                import detectScope as DS
-                resource = DS.select_visa_resource()
-            except ImportError:
-                raise ValueError('resource nao informado')
 
         for attempt in range(3):
             try:
@@ -43,7 +38,7 @@ class SA:
                 self.inst = self.rm.open_resource(resource)
                 break
             except Exception as e:
-                print(f'Tentativa {attempt + 1} falhou: {e}')
+                print('Tentativa ' + str(attempt + 1) + ' falhou: ' + str(e))
                 sleep(2)
                 if attempt >= 2:
                     raise
@@ -51,29 +46,32 @@ class SA:
         self.inst.timeout = 15000
 
         idn = self.inst.query('*IDN?').strip()
-        print('Instrumento detectado:', idn)
+        print('Instrumento detectado: ' + idn)
 
         idn_upper = idn.upper()
-        if any(k in idn_upper for k in ('AGILENT', 'N9010', 'N9020', 'N9030', 'HP')):
+        if ('AGILENT' in idn_upper or 'N9010' in idn_upper or
+                'N9020' in idn_upper or 'N9030' in idn_upper or 'HP' in idn_upper):
             self.driver = AgilentSA(self.inst, debug)
         else:
-            raise Exception(f'Instrumento nao suportado: {idn}')
+            raise Exception('Instrumento nao suportado: ' + idn)
 
     # ------------------------------------------------------------------
-    # File overwrite guard (igual ao scope.py)
+    # File overwrite guard
     # ------------------------------------------------------------------
+
     def _file_exists(self, path):
         if os.path.exists(path):
             if self.overwrite:
                 return False
             nome = os.path.basename(path)
-            resp = input(f'"{nome}" ja existe. Sobrescrever? (s/N): ').strip().lower()
+            resp = input('"' + nome + '" ja existe. Sobrescrever? (s/N): ').strip().lower()
             return resp != 's'
         return False
 
     # ------------------------------------------------------------------
-    # Delegate — trace
+    # Delegate -- trace
     # ------------------------------------------------------------------
+
     def capture_trace(self, trace='Trace1'):
         return self.driver.capture_trace(trace)
 
@@ -81,27 +79,31 @@ class SA:
         return self.driver.get_trace_settings(trace)
 
     def export_csv(self, trace, path):
-        path = path if path.endswith('.csv') else path + '.csv'
+        if not path.endswith('.csv'):
+            path = path + '.csv'
         if self._file_exists(path):
             return
         self.driver.export_csv(trace, path)
 
     # ------------------------------------------------------------------
-    # Delegate — screen
+    # Delegate -- screen
     # ------------------------------------------------------------------
+
     def capture_screen(self, filename=None):
         data = self.driver.capture_screen()
         if filename is not None:
-            filename = filename if filename.endswith('.png') else filename + '.png'
+            if not filename.endswith('.png'):
+                filename = filename + '.png'
             if not self._file_exists(filename):
                 with open(filename, 'wb') as f:
                     f.write(data)
-                print('PNG salvo:', filename)
+                print('PNG salvo: ' + filename)
         return data
 
     # ------------------------------------------------------------------
-    # Delegate — sweep control
+    # Delegate -- sweep control
     # ------------------------------------------------------------------
+
     def sweep_single(self, count=None):
         return self.driver.sweep_single(count)
 
@@ -112,8 +114,9 @@ class SA:
         self.driver.pause()
 
     # ------------------------------------------------------------------
-    # Delegate — configuration
+    # Delegate -- configuration
     # ------------------------------------------------------------------
+
     def load_state(self, state_path):
         self.driver.load_state(state_path)
 
@@ -126,6 +129,7 @@ class SA:
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+
     def close(self):
         try:
             self.driver.close()
@@ -140,5 +144,5 @@ class SA:
     def __enter__(self):
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, *args):
         self.close()

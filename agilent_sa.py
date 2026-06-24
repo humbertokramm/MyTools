@@ -1,4 +1,3 @@
-import numpy as np
 from datetime import datetime
 from time import sleep
 
@@ -11,6 +10,13 @@ TRACE_NAMES = {
     'Trace5': 'TRACE5',
     'Trace6': 'TRACE6',
 }
+
+
+def _linspace(start, stop, n):
+    if n <= 1:
+        return [start]
+    step = (stop - start) / (n - 1)
+    return [start + i * step for i in range(n)]
 
 
 class AgilentSA:
@@ -26,26 +32,26 @@ class AgilentSA:
     def capture_trace(self, trace='Trace1'):
         """Captura trace e retorna (freq_hz, amp_dbuv, metadata).
 
-        freq_hz   : np.ndarray de frequencias em Hz
-        amp_dbuv  : np.ndarray de amplitudes em dBuV
-        metadata  : dict com parametros da medicao
+        freq_hz  : lista de frequencias em Hz
+        amp_dbuv : lista de amplitudes em dBuV
+        metadata : dict com parametros da medicao
         """
         tr = self._trace_name(trace)
 
         settings = self.get_trace_settings(trace)
 
-        raw = self.inst.query(f':TRACe:DATA? {tr}').strip()
-        amp = np.array([float(v) for v in raw.split(',')])
+        raw = self.inst.query(':TRACe:DATA? ' + tr).strip()
+        amp = [float(v) for v in raw.split(',')]
 
         start = float(self.inst.query(':SENSe:FREQuency:STARt?').strip())
         stop  = float(self.inst.query(':SENSe:FREQuency:STOP?').strip())
-        freq  = np.linspace(start, stop, len(amp))
+        freq  = _linspace(start, stop, len(amp))
 
         metadata = {
             'Instrumento': self.inst.query('*IDN?').strip(),
             'Trace': trace,
             'Start Frequency': start,
-            'Stop Frequency':  stop,
+            'Stop Frequency': stop,
             'Number of Points': len(amp),
             'Data da captura': datetime.now().isoformat(),
         }
@@ -54,17 +60,17 @@ class AgilentSA:
 
     def get_trace_settings(self, trace='Trace1'):
         tr = self._trace_name(trace)
-        settings = {}
         queries = {
-            'RBW':          ':SENSe:BANDwidth:RESolution?',
-            'VBW':          ':SENSe:BANDwidth:VIDeo?',
-            'Sweep Time':   ':SENSe:SWEep:TIME?',
-            'Attenuation':  ':SENSe:POWer:RF:ATTenuation?',
-            'Ref Level':    ':DISPlay:WINDow:TRACe:Y:SCALe:RLEVel?',
+            'RBW':           ':SENSe:BANDwidth:RESolution?',
+            'VBW':           ':SENSe:BANDwidth:VIDeo?',
+            'Sweep Time':    ':SENSe:SWEep:TIME?',
+            'Attenuation':   ':SENSe:POWer:RF:ATTenuation?',
+            'Ref Level':     ':DISPlay:WINDow:TRACe:Y:SCALe:RLEVel?',
             'Average Count': ':SENSe:AVERage:COUNt?',
-            'Average Type': ':SENSe:AVERage:TYPE?',
-            'Trace Type':   f':TRACe{tr[-1]}:TYPE?',
+            'Average Type':  ':SENSe:AVERage:TYPE?',
+            'Trace Type':    ':TRACe' + tr[-1] + ':TYPE?',
         }
+        settings = {}
         for key, cmd in queries.items():
             try:
                 settings[key] = self.inst.query(cmd).strip()
@@ -79,13 +85,13 @@ class AgilentSA:
     def capture_screen(self):
         """Captura screenshot e retorna bytes PNG."""
         tmp = '/User/Temp/_sa_screen.png'
-        self._write(f':MMEMory:STORe:SCReen "{tmp}"')
+        self._write(':MMEMory:STORe:SCReen "' + tmp + '"')
         sleep(1.0)
         data = self.inst.query_binary_values(
-            f':MMEMory:DATA? "{tmp}"', datatype='B', container=bytes
+            ':MMEMory:DATA? "' + tmp + '"', datatype='B', container=bytes
         )
         try:
-            self._write(f':MMEMory:DELete "{tmp}"')
+            self._write(':MMEMory:DELete "' + tmp + '"')
         except Exception:
             pass
         return data
@@ -102,7 +108,6 @@ class AgilentSA:
         """
         if count is not None:
             self.set_average(count)
-
         self._write(':INITiate:CONTinuous 0')
         self._write(':INITiate:RESTart')
         return self.wait_sweep()
@@ -130,50 +135,54 @@ class AgilentSA:
     # ------------------------------------------------------------------
 
     def load_state(self, state_path):
-        self._write(f':MMEMory:LOAD:STATe "{state_path}"')
+        self._write(':MMEMory:LOAD:STATe "' + state_path + '"')
 
     def set_freq_range(self, start_hz, stop_hz):
-        self._write(f':SENSe:FREQuency:STARt {start_hz:G}')
-        self._write(f':SENSe:FREQuency:STOP {stop_hz:G}')
+        self._write(':SENSe:FREQuency:STARt ' + repr(start_hz))
+        self._write(':SENSe:FREQuency:STOP '  + repr(stop_hz))
 
     def set_average(self, count, avg_type='Voltage'):
-        self._write(f':SENSe:AVERage:COUNt {count}')
-        self._write(f':SENSe:AVERage:TYPE {avg_type}')
+        self._write(':SENSe:AVERage:COUNt ' + str(count))
+        self._write(':SENSe:AVERage:TYPE '  + avg_type)
 
     # ------------------------------------------------------------------
-    # CSV export (formato nativo N9010A — compativel com radiada_plot.py)
+    # CSV export (formato nativo N9010A -- compativel com radiada_plot.py)
     # ------------------------------------------------------------------
 
     def export_csv(self, trace, path):
         """Salva trace em CSV no mesmo formato exportado pelo N9010A."""
         freq, amp, meta = self.capture_trace(trace)
 
-        lines = []
-        lines.append('Trace')
-        lines.append('Swept SA')
-        lines.append(f"{meta.get('Instrumento', '').split(',')[1].strip() if ',' in meta.get('Instrumento','') else ''},")
-        lines.append(f"Number of Points,{len(amp)}")
-        lines.append(f"Start Frequency,{freq[0]:.0f}")
-        lines.append(f"Stop Frequency,{freq[-1]:.0f}")
-        lines.append(f"RBW,{meta.get('RBW', '')}")
-        lines.append(f"VBW,{meta.get('VBW', '')}")
-        lines.append(f"Sweep Time,{meta.get('Sweep Time', '')}")
-        lines.append(f"Average Count,{meta.get('Average Count', '')}")
-        lines.append(f"Average Type,{meta.get('Average Type', '')}")
-        lines.append(f"Attenuation,{meta.get('Attenuation', '')}")
-        lines.append(f"Ref Level Offset,0")
-        lines.append(f"Trace Type,{meta.get('Trace Type', '')}")
-        lines.append(f"Trace Name,{trace}")
-        lines.append('X Axis Units,Hz')
-        lines.append('Y Axis Units,dBuV')
-        lines.append('DATA')
-        for f, a in zip(freq, amp):
-            lines.append(f'{f:.10g},{a:.15g}')
+        idn = meta.get('Instrumento', '')
+        idn_short = idn.split(',')[1].strip() if ',' in idn else idn
 
-        with open(path, 'w', encoding='utf-8') as fh:
+        lines = [
+            'Trace',
+            'Swept SA',
+            idn_short + ',',
+            'Number of Points,' + str(len(amp)),
+            'Start Frequency,'  + '{:.0f}'.format(freq[0]),
+            'Stop Frequency,'   + '{:.0f}'.format(freq[-1]),
+            'RBW,'              + meta.get('RBW', ''),
+            'VBW,'              + meta.get('VBW', ''),
+            'Sweep Time,'       + meta.get('Sweep Time', ''),
+            'Average Count,'    + meta.get('Average Count', ''),
+            'Average Type,'     + meta.get('Average Type', ''),
+            'Attenuation,'      + meta.get('Attenuation', ''),
+            'Ref Level Offset,0',
+            'Trace Type,'       + meta.get('Trace Type', ''),
+            'Trace Name,'       + trace,
+            'X Axis Units,Hz',
+            'Y Axis Units,dBuV',
+            'DATA',
+        ]
+        for f, a in zip(freq, amp):
+            lines.append('{:.10g},{:.15g}'.format(f, a))
+
+        with open(path, 'w') as fh:
             fh.write('\n'.join(lines))
 
-        print(f'CSV salvo: {path}  ({len(amp)} pontos)')
+        print('CSV salvo: ' + path + '  (' + str(len(amp)) + ' pontos)')
 
     # ------------------------------------------------------------------
     # Internal
@@ -187,7 +196,7 @@ class AgilentSA:
             self.inst.write('*CLS')
             self.inst.write(cmd)
             err = self.inst.query(':SYST:ERR?').strip()
-            print(f'{cmd}  =>  {err}')
+            print(cmd + '  =>  ' + err)
         else:
             self.inst.write(cmd)
 
