@@ -19,7 +19,19 @@ from sa import SA
 # -----------------------------------------------------------------------
 # CONFIGURACAO  (edite aqui antes de rodar)
 # -----------------------------------------------------------------------
-
+bands = [
+    [30e6,1000e6],
+    [30e6,130e6],
+    [130e6,230e6],
+    [230e6,330e6],
+    [330e6,430e6],
+    [430e6,530e6],
+    [530e6,630e6],
+    [630e6,730e6],
+    [730e6,830e6],
+    [830e6,930e6],
+    [930e6,1000e6],
+]
 CONFIG = {
     'ip':       '192.168.0.30',
     'state':    r'D:\State\Setup_Emissao_Radiada_Classe_A_Desenvolvimento.state',
@@ -28,9 +40,8 @@ CONFIG = {
     'pol':      'H',        # H ou V
     'n':        30,         # numero de varreduras (average count)
     'trace':    'Trace2',   # trace de media no analisador
-    'freq_ini': 30e6,       # Hz
-    'freq_fim': 1000e6,     # Hz
     'saida':    r'C:\Medidas',  # pasta raiz; sera criada uma subpasta com a data
+    'bands':bands,
 }
 
 # -----------------------------------------------------------------------
@@ -101,37 +112,39 @@ def main():
     sa = SA(resource)
 
     try:
-        # carrega state e configura faixa
-        sa.load_state(cfg['state'])
-        sa.set_freq_range(cfg['freq_ini'], cfg['freq_fim'])
-        print('State carregado. Faixa: {:.0f} MHz - {:.0f} MHz'.format(
-            cfg['freq_ini'] / 1e6, cfg['freq_fim'] / 1e6
-        ))
+        for local in ['EUT','Ambiente']:
+            if local == 'EUT':
+                print('\nGarantir: EUT ligado, antena polarizacao ' + cfg['pol'])
+            if local == 'Ambiente':
+                print('\nDesligue o EUT (ou desconecte a antena).')
+            input('Pressione ENTER para iniciar captura')
 
-        # ---- EUT -------------------------------------------------------
-        _beep_alerta()
-        print('\nGarantir: EUT ligado, antena polarizacao ' + cfg['pol'])
-        input('Pressione ENTER para iniciar captura do EUT ...')
-        eut_csv = capturar(sa, 'EUT', cfg, pasta)
-
-        # ---- Ambiente --------------------------------------------------
-        _beep_alerta()
-        print('\nDesligue o EUT (ou desconecte a antena).')
-        input('Pressione ENTER para iniciar captura do Ambiente ...')
-        amb_csv = capturar(sa, 'Ambiente', cfg, pasta)
+            for i in CONFIG['bands']:
+                cfg['freq_ini'] = i[0]
+                cfg['freq_fim'] = i[1]
+                # carrega state e configura faixa
+                sa.load_state(cfg['state'])
+                sa.set_freq_range(cfg['freq_ini'], cfg['freq_fim'])
+                print('State carregado. Faixa: {:.0f} MHz - {:.0f} MHz'.format(
+                    cfg['freq_ini'] / 1e6, cfg['freq_fim'] / 1e6
+                ))
+                
+                # ---- local -------------------------------------------------------
+                _beep_alerta()
+                path = capturar(sa, local, cfg, pasta)
+                print(path)
 
     finally:
         sa.close()
 
-    # resumo
-    print('\n' + '=' * 55)
-    print('Concluido!')
-    print('EUT    : ' + eut_csv)
-    print('Amb    : ' + amb_csv)
-    print('=' * 55)
-    print('\nPara analisar (no PC de analise):')
-    print('  python radiada_plot.py "' + eut_csv + '" "' + amb_csv + '" <limit.csv>')
+        # resumo
+        print('\n' + '=' * 55)
+        print('Concluido!')
+        print('=' * 55)
+        print('\nPara analisar (no PC de analise):')
 
 
 if __name__ == '__main__':
-    main()
+
+
+        main()
