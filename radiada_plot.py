@@ -102,8 +102,11 @@ def stitch_csvs(paths):
 
 
 def _load_trace(path_or_pattern):
-    """Carrega um trace: arquivo unico ou multiplos por glob."""
-    paths = _resolve_paths(path_or_pattern)
+    """Carrega um trace: string (arquivo ou glob) ou lista de caminhos."""
+    if isinstance(path_or_pattern, (list, tuple)):
+        paths = sorted(path_or_pattern)
+    else:
+        paths = _resolve_paths(path_or_pattern)
     if len(paths) == 1:
         return _parse_csv(paths[0])
     return stitch_csvs(paths)
@@ -228,9 +231,11 @@ def analyze(eut_path, amb_path, limit_path=None):
     ))
     ax.xaxis.set_minor_formatter(ticker.NullFormatter())
 
-    eut_label = os.path.basename(eut_path) if '*' not in eut_path else eut_path
-    amb_label = os.path.basename(amb_path) if '*' not in amb_path else amb_path
-    ax.set_title('Emissao Radiada  --  ' + eut_label + '  vs  ' + amb_label, color='#eeeeee')
+    def _label(p):
+        if isinstance(p, (list, tuple)):
+            return '{} arquivos'.format(len(p))
+        return os.path.basename(p) if '*' not in p else p
+    ax.set_title('Emissao Radiada  --  ' + _label(eut_path) + '  vs  ' + _label(amb_path), color='#eeeeee')
     ax.set_xlabel('Frequência (MHz)')
     ax.set_ylabel('Amplitude (dBuV)')
     ax.grid(True, which='major', color=GRID, lw=0.8)
@@ -310,15 +315,41 @@ def analyze(eut_path, amb_path, limit_path=None):
 # Entry point
 # -----------------------------------------------------------------------
 
-if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print("Uso: python " + sys.argv[0] + " <eut.csv|pattern> <amb.csv|pattern> [<limit.csv>]")
-        print("  arquivo unico : python radiada_plot.py eut.csv amb.csv limit.csv")
-        print("  sub-bandas    : python radiada_plot.py \"*EUT*.csv\" \"*Ambiente*.csv\" limit.csv")
-        sys.exit(1)
+def _gui_pick():
+    """Abre seletores de arquivo tkinter e retorna (eut, amb, limit)."""
+    import tkinter as tk
+    from tkinter import filedialog
 
-    eut_path   = sys.argv[1]
-    amb_path   = sys.argv[2]
-    limit_path = sys.argv[3] if len(sys.argv) > 3 else None
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+
+    CSV = [('CSV', '*.csv'), ('Todos', '*.*')]
+
+    eut_files = filedialog.askopenfilenames(title='EUT -- selecione CSV(s)', filetypes=CSV)
+    if not eut_files:
+        sys.exit(0)
+
+    amb_files = filedialog.askopenfilenames(title='Ambiente -- selecione CSV(s)', filetypes=CSV)
+    if not amb_files:
+        sys.exit(0)
+
+    limit_file = filedialog.askopenfilename(
+        title='Limite CSV (opcional -- cancele para ignorar)', filetypes=CSV
+    )
+    root.destroy()
+
+    eut = list(eut_files) if len(eut_files) > 1 else eut_files[0]
+    amb = list(amb_files) if len(amb_files) > 1 else amb_files[0]
+    return eut, amb, limit_file or None
+
+
+if __name__ == '__main__':
+    if len(sys.argv) >= 3:
+        eut_path   = sys.argv[1]
+        amb_path   = sys.argv[2]
+        limit_path = sys.argv[3] if len(sys.argv) > 3 else None
+    else:
+        eut_path, amb_path, limit_path = _gui_pick()
 
     analyze(eut_path, amb_path, limit_path)
