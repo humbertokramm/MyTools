@@ -145,6 +145,19 @@ class AgilentSA:
         self._write(':SENSe:AVERage:COUNt ' + str(count))
         self._write(':SENSe:AVERage:TYPE '  + avg_type)
 
+    def set_peak_table(self, state=True):
+        """Exibe ou oculta a tabela de picos ordenada por amplitude."""
+        val = '1' if state else '0'
+        if state:
+            self._write(':CALCulate:MARKer1:MAXimum:PEAK')
+            self._write(':CALCulate:MARKer:PEAK:SORT AMPLitude')
+        self._write(':CALCulate:MARKer:PEAK:TABLe:STATe ' + val)
+
+    def set_fullscreen(self, state=True):
+        """Liga/desliga full screen (oculta o painel lateral de softkeys)."""
+        val = '1' if state else '0'
+        self._write(':DISPlay:FSCReen:STATe ' + val)
+
     # ------------------------------------------------------------------
     # CSV export (formato nativo N9010A -- compativel com radiada_plot.py)
     # ------------------------------------------------------------------

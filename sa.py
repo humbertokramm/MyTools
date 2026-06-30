@@ -126,6 +126,12 @@ class SA:
     def set_average(self, count, avg_type='Voltage'):
         self.driver.set_average(count, avg_type)
 
+    def set_peak_table(self, state=True):
+        self.driver.set_peak_table(state)
+
+    def set_fullscreen(self, state=True):
+        self.driver.set_fullscreen(state)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

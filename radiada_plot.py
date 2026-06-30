@@ -158,6 +158,17 @@ def _print_peaks(freq_mhz, net, lim, peaks):
 # Plot
 # -----------------------------------------------------------------------
 
+_PALETTES = [
+    # Máx  — amarelo (igual ao instrumento), cinza escuro Amb, laranja Net
+    dict(eut='#ffd166', amb='#666666', net='#f4a261', ls='-', lw=1.2),
+    # Méd  — ciano   (igual ao instrumento), cinza médio Amb, verde Net
+    dict(eut='#26c6da', amb='#999999', net='#81c784', ls='-', lw=0.9),
+]
+
+def _lbl(prefix, suffix):
+    return prefix + (' ' + suffix if suffix else '')
+
+
 def _fmt_freq(f):
     if f >= 1000:    return f"{f:.6g} GHz" if f >= 1000 else f"{f:.6g} MHz"
     if f >= 1:       return f"{f:.6g} MHz"
@@ -172,26 +183,16 @@ def _fmt_span(fmin, fmax):
     return f"{_fmt_freq(fmin)}  →  {_fmt_freq(fmax)}\n{delta}"
 
 
-def analyze(eut_path, amb_path, limit_path=None):
-    _, f_eut, a_eut = _load_trace(eut_path)
-    _, f_amb, a_amb = _load_trace(amb_path)
-
-    if not np.array_equal(f_eut, f_amb):
-        a_amb = np.interp(f_eut, f_amb, a_amb)
-
-    freq_mhz = f_eut / 1e6
-    net = a_eut - a_amb
-
-    lim = None
-    if limit_path and os.path.isfile(limit_path):
-        lim_freq_hz, lim_amp = _parse_limit(limit_path)
-        lim = _interp_limit(f_eut, lim_freq_hz, lim_amp)
-
-    # ── Figura ──────────────────────────────────────────────────────────
-    BG     = '#1c1c1c'
-    GRID   = '#2e2e2e'
-    SPINE  = '#555'
-    TXT    = '#cccccc'
+def analyze(trace_sets, limit_path=None):
+    """
+    trace_sets: list of (eut_path, amb_path, label)
+    label: 'Máx', 'Méd', '' etc.
+    Picos e violações são marcados sobre o primeiro conjunto (geralmente Máx).
+    """
+    BG    = '#1c1c1c'
+    GRID  = '#2e2e2e'
+    SPINE = '#555'
+    TXT   = '#cccccc'
 
     fig, ax = plt.subplots(figsize=(14, 6))
     fig.patch.set_facecolor(BG)
@@ -203,24 +204,50 @@ def analyze(eut_path, amb_path, limit_path=None):
     ax.yaxis.label.set_color(TXT)
     ax.title.set_color('#eeeeee')
 
-    # traces
-    l_amb, = ax.plot(freq_mhz, a_amb, color='#777777', lw=0.7, alpha=0.6, label='Ambiente')
-    l_eut, = ax.plot(freq_mhz, a_eut, color='#4ea8de', lw=0.8, alpha=0.8, label='EUT')
-    l_net, = ax.plot(freq_mhz, net,   color='#f4a261', lw=1.2,             label='EUT - Ambiente')
+    loaded = []
+    for i, (eut_p, amb_p, lbl) in enumerate(trace_sets):
+        _, f_eut, a_eut = _load_trace(eut_p)
+        _, f_amb, a_amb = _load_trace(amb_p)
+        if not np.array_equal(f_eut, f_amb):
+            a_amb = np.interp(f_eut, f_amb, a_amb)
+        net = a_eut - a_amb
+        freq_mhz = f_eut / 1e6
+        pal = _PALETTES[i % len(_PALETTES)]
+        loaded.append((freq_mhz, f_eut, a_eut, a_amb, net, pal, lbl))
 
-    if lim is not None:
-        ax.plot(freq_mhz, lim, color='#e63946', lw=1.5, ls='--', label='Limite')
+    all_lines = {}
 
-        exceed = net > lim
+    for freq_mhz, _, a_eut, a_amb, net, pal, lbl in loaded:
+        ls, lw = pal['ls'], pal['lw']
+        l_amb, = ax.plot(freq_mhz, a_amb, color=pal['amb'], lw=0.7, alpha=0.5,
+                         ls=ls, label=_lbl('Ambiente', lbl))
+        l_eut, = ax.plot(freq_mhz, a_eut, color=pal['eut'], lw=0.8, alpha=0.8,
+                         ls=ls, label=_lbl('EUT', lbl))
+        l_net, = ax.plot(freq_mhz, net,   color=pal['net'], lw=lw,
+                         ls=ls, label=_lbl('EUT - Ambiente', lbl))
+        all_lines[_lbl('Ambiente', lbl)]      = l_amb
+        all_lines[_lbl('EUT', lbl)]           = l_eut
+        all_lines[_lbl('EUT - Ambiente', lbl)] = l_net
+
+    # ── Limite e picos (sobre o primeiro conjunto) ───────────────────────
+    if limit_path and os.path.isfile(limit_path):
+        freq_mhz0, f_eut0, _, _, net0, _, _ = loaded[0]
+        lim_freq_hz, lim_amp = _parse_limit(limit_path)
+        lim = _interp_limit(f_eut0, lim_freq_hz, lim_amp)
+
+        l_lim, = ax.plot(freq_mhz0, lim, color='#e63946', lw=1.5, ls='--', label='Limite')
+        all_lines['Limite'] = l_lim
+
+        exceed = net0 > lim
         if exceed.any():
-            ax.fill_between(freq_mhz, net, lim, where=exceed,
+            ax.fill_between(freq_mhz0, net0, lim, where=exceed,
                             color='#e63946', alpha=0.20, zorder=2)
 
-        peaks = _find_peaks(freq_mhz, net, lim)
+        peaks = _find_peaks(freq_mhz0, net0, lim)
         if peaks:
-            ax.scatter(freq_mhz[peaks], net[peaks],
+            ax.scatter(freq_mhz0[peaks], net0[peaks],
                        color='#e63946', s=18, zorder=5, label='_nolegend_')
-            _print_peaks(freq_mhz, net, lim, peaks)
+            _print_peaks(freq_mhz0, net0, lim, peaks)
         else:
             print("\nNenhum pico acima do limite.\n")
 
@@ -231,27 +258,27 @@ def analyze(eut_path, amb_path, limit_path=None):
     ))
     ax.xaxis.set_minor_formatter(ticker.NullFormatter())
 
-    def _label(p):
+    def _lp(p):
         if isinstance(p, (list, tuple)):
-            return '{} arquivos'.format(len(p))
-        return os.path.basename(p) if '*' not in p else p
-    ax.set_title('Emissao Radiada  --  ' + _label(eut_path) + '  vs  ' + _label(amb_path), color='#eeeeee')
+            return '{} arq.'.format(len(p))
+        return os.path.basename(p) if '*' not in str(p) else str(p)
+
+    eut0_p, amb0_p, _ = trace_sets[0]
+    ax.set_title('Emissão Radiada  —  ' + _lp(eut0_p) + '  vs  ' + _lp(amb0_p),
+                 color='#eeeeee')
     ax.set_xlabel('Frequência (MHz)')
     ax.set_ylabel('Amplitude (dBuV)')
     ax.grid(True, which='major', color=GRID, lw=0.8)
     ax.grid(True, which='minor', color=GRID, lw=0.3)
-    ax.set_xlim(freq_mhz[0], freq_mhz[-1])
+    ax.set_xlim(loaded[0][0][0], loaded[0][0][-1])
 
     # ── Legenda interativa ───────────────────────────────────────────────
     leg = ax.legend(loc='upper right',
                     facecolor='#2a2a2a', edgecolor=SPINE, labelcolor=TXT)
     mapa = {}
-    label_to_line = {l.get_label(): l
-                     for l in ax.get_lines()
-                     if not l.get_label().startswith('_')}
     for ll in leg.get_lines():
         ll.set_picker(5)
-        orig = label_to_line.get(ll.get_label())
+        orig = all_lines.get(ll.get_label())
         if orig:
             mapa[ll] = orig
 
@@ -315,41 +342,87 @@ def analyze(eut_path, amb_path, limit_path=None):
 # Entry point
 # -----------------------------------------------------------------------
 
+def _find_in_folder(folder):
+    """Varre a pasta por CSVs, detecta pares Máx/Méd por sufixo no nome.
+
+    Retorna (trace_sets, limit_path) onde trace_sets é uma lista de
+    (eut_path_ou_lista, amb_path_ou_lista, label).
+    """
+    csvs = sorted(glob.glob(os.path.join(folder, '*.csv')))
+    if not csvs:
+        raise FileNotFoundError('Nenhum CSV encontrado em: ' + folder)
+
+    def _pick(pool, *keys):
+        return [p for p in pool
+                if any(k in os.path.basename(p).lower() for k in keys)]
+
+    eut_all = _pick(csvs, 'eut')
+    amb_all = _pick(csvs, 'ambiente')
+    lim_all = _pick(csvs, 'limite', 'limit')
+
+    if not eut_all:
+        raise FileNotFoundError('Nenhum CSV com "EUT" no nome em: ' + folder)
+    if not amb_all:
+        raise FileNotFoundError('Nenhum CSV com "Ambiente" no nome em: ' + folder)
+
+    eut_max = _pick(eut_all, '- max', '_max')
+    eut_med = _pick(eut_all, '- med', '_med', '- avg', '_avg')
+    amb_max = _pick(amb_all, '- max', '_max')
+    amb_med = _pick(amb_all, '- med', '_med', '- avg', '_avg')
+
+    def _wrap(files):
+        return files[0] if len(files) == 1 else files
+
+    trace_sets = []
+    if eut_max and amb_max:
+        trace_sets.append((_wrap(eut_max), _wrap(amb_max), 'Máx'))
+    if eut_med and amb_med:
+        trace_sets.append((_wrap(eut_med), _wrap(amb_med), 'Méd'))
+    if not trace_sets:
+        trace_sets = [(_wrap(eut_all), _wrap(amb_all), '')]
+
+    lim = lim_all[0] if lim_all else None
+
+    print('Conjuntos : {}'.format(', '.join(lbl for _, _, lbl in trace_sets) or '1'))
+    print('EUT       : {} arquivo(s)'.format(len(eut_all)))
+    print('Ambiente  : {} arquivo(s)'.format(len(amb_all)))
+    print('Limite    : {}'.format(os.path.basename(lim) if lim else 'não encontrado'))
+    return trace_sets, lim
+
+
 def _gui_pick():
-    """Abre seletores de arquivo tkinter e retorna (eut, amb, limit)."""
+    """Abre seletor de pasta tkinter e retorna (trace_sets, limit_path)."""
     import tkinter as tk
-    from tkinter import filedialog
+    from tkinter import filedialog, messagebox
 
     root = tk.Tk()
     root.withdraw()
     root.attributes('-topmost', True)
 
-    CSV = [('CSV', '*.csv'), ('Todos', '*.*')]
-
-    eut_files = filedialog.askopenfilenames(title='EUT -- selecione CSV(s)', filetypes=CSV)
-    if not eut_files:
+    folder = filedialog.askdirectory(title='Selecione a pasta com os CSVs')
+    if not folder:
         sys.exit(0)
 
-    amb_files = filedialog.askopenfilenames(title='Ambiente -- selecione CSV(s)', filetypes=CSV)
-    if not amb_files:
-        sys.exit(0)
+    try:
+        trace_sets, lim = _find_in_folder(folder)
+    except FileNotFoundError as e:
+        messagebox.showerror('Erro', str(e))
+        root.destroy()
+        sys.exit(1)
 
-    limit_file = filedialog.askopenfilename(
-        title='Limite CSV (opcional -- cancele para ignorar)', filetypes=CSV
-    )
     root.destroy()
-
-    eut = list(eut_files) if len(eut_files) > 1 else eut_files[0]
-    amb = list(amb_files) if len(amb_files) > 1 else amb_files[0]
-    return eut, amb, limit_file or None
+    return trace_sets, lim
 
 
 if __name__ == '__main__':
-    if len(sys.argv) >= 3:
+    if len(sys.argv) == 2 and os.path.isdir(sys.argv[1]):
+        trace_sets, limit_path = _find_in_folder(sys.argv[1])
+    elif len(sys.argv) >= 3:
         eut_path   = sys.argv[1]
         amb_path   = sys.argv[2]
         limit_path = sys.argv[3] if len(sys.argv) > 3 else None
+        trace_sets = [(eut_path, amb_path, '')]
     else:
-        eut_path, amb_path, limit_path = _gui_pick()
+        trace_sets, limit_path = _gui_pick()
 
-    analyze(eut_path, amb_path, limit_path)
+    analyze(trace_sets, limit_path)

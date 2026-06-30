@@ -10,6 +10,7 @@ import os
 import sys
 import winsound
 from datetime import datetime
+from time import sleep
 
 # garante que sa.py e agilent_sa.py sao encontrados
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -39,11 +40,12 @@ CONFIG = {
     'tensao':   '220_48',   # tensao de operacao do EUT
     'pol':      'H',        # H ou V
     'n':        30,         # numero de varreduras (average count)
-    'trace':    'Trace2',   # trace de media no analisador
-    'saida':    r'C:\Medidas',  # pasta raiz; sera criada uma subpasta com a data
-    'bands':bands,
+    # lista de (trace_no_analisador, sufixo_no_nome_do_arquivo)
+    'traces':   [('Trace1', 'Max'), ('Trace2', 'Med')],
+    'saida':    r'T:\1berto\Medidas',  # pasta raiz; sera criada uma subpasta com a data
+    'bands':    bands,
 }
-
+CONFIG['saida'] = CONFIG['saida']+'\\' + CONFIG['pol']+'\\' + CONFIG['tensao']
 # -----------------------------------------------------------------------
 
 
@@ -56,21 +58,22 @@ def _beep_alerta():
     winsound.Beep(800, 800)
 
 
-def _nome_arquivo(modo, cfg):
+def _nome_arquivo(modo, cfg, trace_label=''):
     """Retorna o nome base do arquivo sem extensao."""
     faixa = '{:.0f}MHz-{:.0f}MHz'.format(cfg['freq_ini'] / 1e6, cfg['freq_fim'] / 1e6)
+    suffix = ' - ' + trace_label if trace_label else ''
     if modo == 'EUT':
-        return '{} Radiada - {} - EUT - Classe {} {}V'.format(
-            faixa, cfg['pol'], cfg['classe'], cfg['tensao']
+        return '{} Radiada - {} - EUT - Classe {} {}V{}'.format(
+            faixa, cfg['pol'], cfg['classe'], cfg['tensao'], suffix
         )
     else:
-        return '{} Radiada - {} - Ambiente - Classe {}'.format(
-            faixa, cfg['pol'], cfg['classe']
+        return '{} Radiada - {} - Ambiente - Classe {}{}'.format(
+            faixa, cfg['pol'], cfg['classe'], suffix
         )
 
 
 def capturar(sa, modo, cfg, pasta):
-    """Executa uma varredura completa e salva CSV + PNG."""
+    """Executa uma varredura completa e salva CSV (um por trace) + PNG."""
     print('\n' + '=' * 55)
     print('Iniciando: ' + modo)
     print('=' * 55)
@@ -81,19 +84,27 @@ def capturar(sa, modo, cfg, pasta):
         print('AVISO: timeout na varredura!')
     sa.pause()
 
-    nome = _nome_arquivo(modo, cfg)
-    csv_path = os.path.join(pasta, nome + '.csv')
-    png_path = os.path.join(pasta, nome + '.png')
+    traces = cfg.get('traces', [('Trace1', '')])
+    csv_paths = []
+    for trace_name, trace_label in traces:
+        nome = _nome_arquivo(modo, cfg, trace_label)
+        csv_path = os.path.join(pasta, nome + '.csv')
+        sa.export_csv(trace_name, csv_path)
+        print('CSV salvo: ' + csv_path)
+        csv_paths.append(csv_path)
 
-    sa.export_csv(cfg['trace'], csv_path)
-
+    # PNG uma vez (tela atual com todos os traces visiveis + tabela de picos)
+    sa.set_fullscreen(True)   # load_state pode ter resetado o modo full screen
+    sa.set_peak_table(True)
+    png_path = os.path.join(pasta, _nome_arquivo(modo, cfg) + '.png')
     img = sa.capture_screen()
+    sa.set_peak_table(False)
     with open(png_path, 'wb') as fh:
         fh.write(img)
     print('PNG salvo: ' + png_path)
 
     _beep_ok()
-    return csv_path
+    return csv_paths
 
 
 def main():
@@ -110,6 +121,7 @@ def main():
     resource = 'TCPIP0::' + cfg['ip'] + '::inst0::INSTR'
     print('Conectando em ' + resource + ' ...')
     sa = SA(resource)
+    sa.set_fullscreen(True)
 
     try:
         for local in ['EUT','Ambiente']:
@@ -131,10 +143,12 @@ def main():
                 
                 # ---- local -------------------------------------------------------
                 _beep_alerta()
-                path = capturar(sa, local, cfg, pasta)
-                print(path)
+                paths = capturar(sa, local, cfg, pasta)
+                for p in paths:
+                    print(p)
 
     finally:
+        sa.set_fullscreen(False)
         sa.close()
 
         # resumo
