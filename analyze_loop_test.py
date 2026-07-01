@@ -470,11 +470,16 @@ def parse_log(filepath):
             else:
                 lua_state = 0
         elif lua_state == 2:
-            m = re.search(r'AuthorDate:\s*(.+)', line)
-            if m and cur['lua_commit'] is None:
-                cur['lua_commit'] = lua_commit_tmp
-                cur['lua_date']   = m.group(1).strip()
-            lua_state = 0
+            # Aceita "AuthorDate:" (git log --pretty=fuller) ou "Date:" (git log --pretty)
+            # Pula linha "Author:" sem resetar o estado
+            m = re.search(r'(?:Author)?Date:\s*(.+)', line)
+            if m:
+                if cur['lua_commit'] is None:
+                    cur['lua_commit'] = lua_commit_tmp
+                    cur['lua_date']   = m.group(1).strip()
+                lua_state = 0
+            elif not re.search(r'\bAuthor\b', line):
+                lua_state = 0   # linha inesperada — desiste
 
         # ── DPLL table rows ───────────────────────────────────────────────────
         m = DPLL_ROW_RE.search(line)
@@ -577,6 +582,7 @@ def loop_status(loop):
 def lua_date_short(raw_date):
     try:
         clean = re.sub(r'\s+[+-]\d{4}$', '', raw_date).strip()
+        clean = re.sub(r'\s+', ' ', clean)   # normaliza espacos duplos (Jul  1 -> Jul 1)
         d = datetime.strptime(clean, '%a %b %d %H:%M:%S %Y')
         return d.strftime('%Y-%m-%d')
     except Exception:
