@@ -1,6 +1,7 @@
 HOST    = '192.168.0.15'
 LOCALIP = '192.168.0.25'
 
+
 wait 'DM4780 login:'
 sendln 'root'
 wait 'Password:'
@@ -12,7 +13,8 @@ send LOCALIP
 sendln ' up'
 
 wait '#'
-send 'busybox tftp -gr pd3407f00_0x0A_cyc10lp_release_03_26-02-05_14h57min -l /tmp/LP.rbf '
+send 'busybox tftp -gr pd3407f00_0x0A_cyc10lp_release_03_26-02-05_14h57min.rbf -l /tmp/LP.rbf '
+
 sendln HOST
 
 wait '#'
@@ -26,3 +28,28 @@ sendln 'eq = pd4202.new(false)'
 
 wait '>'
 sendln 'eq.fpga.ctrl_block:update_application_image(0,"/tmp/LP.rbf",true)'
+
+wait '>'
+sendln 'os.execute("reboot")'
+
+wait 'DM4780 login:'
+sendln 'root'
+wait 'Password:'
+sendln 'root'
+
+wait '#'
+send 'ifconfig eth0 '
+send LOCALIP
+sendln ' up'
+
+wait '#'
+sendln 'lua'
+
+wait '>'
+sendln 'require("pd4202")'
+
+wait '>'
+sendln 'eq = pd4202.new(false)'
+
+wait '>'
+sendln 'eq:ft_card_init(0,100,false)'

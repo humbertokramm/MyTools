@@ -60,10 +60,10 @@ cd /d C:\Projetos\platf-scripts-lua
 
 :: Deleta arquivos desnecessários
 del /f /q lua_tar.txt
+del /f /q lua.tar.gz
 
 :: Move lua.tar.gz para pasta TFTP substituindo
 move /y lua_%PROJETO%_*.tar.gz C:\Testes\TFTP\lua_%PROJETO%.tar.gz
-move /y lua.tar.gz C:\Testes\TFTP\lua.tar.gz
 
 echo Arquivos organizados!
 
