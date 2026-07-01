@@ -211,6 +211,7 @@ def _new_loop_dict(device='unknown', prev=None):
         mac_address       = None,
         lua_commit        = None,
         lua_date          = None,
+        lua_dirty_files   = None,
         boot_lines        = [],
         _lines            = [],
         mainboard_product = None,
@@ -244,7 +245,7 @@ def _new_loop_dict(device='unknown', prev=None):
                   'fan_trays', 'max34460_crc',
                   'zl30733_fw', 'zl30733_cfg',
                   'gnss_ver', 'fpga_date',
-                  'lua_commit', 'lua_date',
+                  'lua_commit', 'lua_date', 'lua_dirty_files',
                   'product'):
             if prev.get(k):
                 d[k] = prev[k]
@@ -268,6 +269,7 @@ def parse_log(filepath):
     in_boot  = False
     lua_state      = 0
     lua_commit_tmp = None
+    lua_dirty_tmp  = []
     in_report      = False
     device         = 'unknown'
 
@@ -477,9 +479,25 @@ def parse_log(filepath):
                 if cur['lua_commit'] is None:
                     cur['lua_commit'] = lua_commit_tmp
                     cur['lua_date']   = m.group(1).strip()
-                lua_state = 0
+                lua_dirty_tmp = []
+                lua_state = 3   # continua buscando secao de modificados
             elif not re.search(r'\bAuthor\b', line):
-                lua_state = 0   # linha inesperada — desiste
+                lua_state = 0
+        elif lua_state == 3:
+            # Aguarda cabecalho da secao de arquivos modificados
+            if 'Modificados nao commitados' in stripped:
+                lua_state = 4
+            elif stripped and not stripped.startswith('=') and not stripped.startswith(' '):
+                # Linha de sistema — saiu do bloco lua
+                lua_state = 0
+        elif lua_state == 4:
+            # Coleta linhas de arquivos modificados ate o separador final
+            if re.match(r'={5,}', stripped):
+                if cur.get('lua_dirty_files') is None:
+                    cur['lua_dirty_files'] = list(lua_dirty_tmp)
+                lua_state = 0
+            elif stripped:
+                lua_dirty_tmp.append(stripped.strip())
 
         # ── DPLL table rows ───────────────────────────────────────────────────
         m = DPLL_ROW_RE.search(line)
@@ -1441,6 +1459,10 @@ def build(loops, filepath, sensor_keys, ref_ok):
     if lua_sha1:
         date_cp = lua_date_short(lua_dt) if lua_dt else ''
         copy_lines.append(f"Lua: {lua_sha1}" + (f"  ({date_cp})" if date_cp else ""))
+    lua_dirty_copy = next((l.get('lua_dirty_files') for l in loops
+                           if l.get('lua_dirty_files') is not None), None)
+    if lua_dirty_copy:
+        copy_lines.append("Lua dirty: " + "  ".join(lua_dirty_copy))
     dut_copy_text_js = json.dumps("\n".join(copy_lines), ensure_ascii=False)
 
     if any([mb_product, psu_dc_mdl, psu_ac_mdl, fan_trays_global,
@@ -1491,6 +1513,8 @@ def build(loops, filepath, sensor_keys, ref_ok):
             rows.append(f'<tr>{zl_cells}</tr>')
         if gnss:
             rows.append(f'<tr><td class="dk">GNSS</td><td class="dv">{gnss}</td></tr>')
+        lua_dirty = next((l.get('lua_dirty_files') for l in loops
+                          if l.get('lua_dirty_files') is not None), None)
         if lua_sha1:
             date_disp = lua_date_short(lua_dt) if lua_dt else ''
             rows.append(
@@ -1498,6 +1522,17 @@ def build(loops, filepath, sensor_keys, ref_ok):
                 f'<td class="dk">Lua commit</td>'
                 f'<td class="dv" colspan="5" style="font-size:.78rem">{lua_sha1}</td>'
                 f'<td class="dk">data</td><td class="dv">{date_disp}</td>'
+                f'</tr>'
+            )
+        if lua_dirty:
+            files_html = '&nbsp; '.join(
+                f'<span style="font-family:monospace;font-size:.72rem">{f}</span>'
+                for f in lua_dirty
+            )
+            rows.append(
+                f'<tr>'
+                f'<td class="dk" style="color:#e65100">Lua dirty</td>'
+                f'<td class="dv" colspan="7" style="color:#e65100">{files_html}</td>'
                 f'</tr>'
             )
 
