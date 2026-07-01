@@ -5,6 +5,8 @@
 #scripts
 *.pyc
 __pycache__/
+build/
+dist/
 
 *.pdf
 *.png
