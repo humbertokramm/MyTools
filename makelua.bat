@@ -46,6 +46,22 @@ if "%PROJETO%"=="" (
 )
 
 echo.
+echo Gerando luaversion.txt...
+echo.
+
+if not exist C:\Projetos\platf-scripts-lua\release_info mkdir C:\Projetos\platf-scripts-lua\release_info
+
+powershell -NoProfile -Command ^
+    "Set-Location 'C:\Projetos\platf-scripts-lua';" ^
+    "$log   = git log -n1 --pretty | Select-Object -First 5;" ^
+    "$dirty = git status --short;" ^
+    "$out   = $log + @('', '=== Modificados nao commitados ===');" ^
+    "if ($dirty) { $out += $dirty; $out += '===================' } else { $out += '(nenhum)' };" ^
+    "$utf8  = [System.Text.UTF8Encoding]::new($false);" ^
+    "[System.IO.File]::WriteAllLines('C:\Projetos\platf-scripts-lua\release_info\luaversion.txt', $out, $utf8);" ^
+    "Write-Host 'luaversion.txt gerado.'"
+
+echo.
 echo Rodando o script e compilando "%PROJETO%"...
 echo.
 
