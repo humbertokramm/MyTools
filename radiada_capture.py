@@ -10,7 +10,8 @@ import os
 import sys
 import winsound
 from datetime import datetime
-from time import sleep
+import msvcrt
+import time
 
 # garante que sa.py e agilent_sa.py sao encontrados
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,30 +21,33 @@ from sa import SA
 # -----------------------------------------------------------------------
 # CONFIGURACAO  (edite aqui antes de rodar)
 # -----------------------------------------------------------------------
-bands = [
-    [30e6,1000e6],
-    [30e6,130e6],
-    [130e6,230e6],
-    [230e6,330e6],
-    [330e6,430e6],
-    [430e6,530e6],
-    [530e6,630e6],
-    [630e6,730e6],
-    [730e6,830e6],
-    [830e6,930e6],
-    [930e6,1000e6],
-]
+state={
+    "A": r'D:\State\Setup_Emissao_Radiada_Classe_A_Desenvolvimento.state',
+    "B": r'D:\State\Setup_Emissao_Radiada_Classe_B_Desenvolvimento.state',
+}
+
 CONFIG = {
     'ip':       '192.168.0.30',
-    'state':    r'D:\State\Setup_Emissao_Radiada_Classe_A_Desenvolvimento.state',
     'classe':   'A',
-    'tensao':   '220_48',   # tensao de operacao do EUT
-    'pol':      'H',        # H ou V
+    'tensao':   '127 bkp + 127',   # tensao de operacao do EUT
+    'pol':      'V',        # H ou V
     'n':        30,         # numero de varreduras (average count)
     # lista de (trace_no_analisador, sufixo_no_nome_do_arquivo)
     'traces':   [('Trace1', 'Max'), ('Trace2', 'Med')],
     'saida':    r'T:\1berto\Medidas',  # pasta raiz; sera criada uma subpasta com a data
-    'bands':    bands,
+    'bands':[
+        [30e6,1000e6],
+        [30e6,130e6],
+        [130e6,230e6],
+        [230e6,330e6],
+        [330e6,430e6],
+        [430e6,530e6],
+        [530e6,630e6],
+        [630e6,730e6],
+        [730e6,830e6],
+        [830e6,930e6],
+        [930e6,1000e6],
+    ],
 }
 CONFIG['saida'] = CONFIG['saida']+'\\' + CONFIG['pol']+'\\' + CONFIG['tensao']
 # -----------------------------------------------------------------------
@@ -56,6 +60,18 @@ def _beep_ok():
 
 def _beep_alerta():
     winsound.Beep(800, 800)
+
+def _screen_blink():
+    print("\nPressione ENTER para sair...")
+    i = 0
+    colors = ["4E","60"]
+    while not msvcrt.kbhit():
+         os.system("color "+colors[i % len(colors)])
+         i += 1
+         time.sleep(0.5)
+    msvcrt.getch()
+    os.system("color 07")
+
 
 
 def _nome_arquivo(modo, cfg, trace_label=''):
@@ -128,14 +144,14 @@ def main():
             if local == 'EUT':
                 print('\nGarantir: EUT ligado, antena polarizacao ' + cfg['pol'])
             if local == 'Ambiente':
-                print('\nDesligue o EUT (ou desconecte a antena).')
-            input('Pressione ENTER para iniciar captura')
+                print('\nDesligue o EUT')
+            _screen_blink()
 
             for i in CONFIG['bands']:
                 cfg['freq_ini'] = i[0]
                 cfg['freq_fim'] = i[1]
                 # carrega state e configura faixa
-                sa.load_state(cfg['state'])
+                sa.load_state(state[cfg['classe']])
                 sa.set_freq_range(cfg['freq_ini'], cfg['freq_fim'])
                 print('State carregado. Faixa: {:.0f} MHz - {:.0f} MHz'.format(
                     cfg['freq_ini'] / 1e6, cfg['freq_fim'] / 1e6
