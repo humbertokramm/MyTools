@@ -32,8 +32,8 @@ TS_STRIP_RE = re.compile(r'^\[[^\]]{10,30}\]\s*')
 MAINBOARD_IDENT_RE = re.compile(
     r'\]\s*(DM[\w\s+]*?)\s+-\s+(\d{3}\.\d{4}\.\d+)\s+-\s+(\d+)'
 )
-PSU_DC_RE    = re.compile(r'PSU DC:\s+(\S+)\s+(.*\S)')
-PSU_AC_RE    = re.compile(r'PSU AC:\s+(\S+)\s+(.*\S)')
+PSU_DC_RE    = re.compile(r'PSU\s+(?:DC|BKP):\s+(\S+)\s+(.*\S)')
+PSU_AC_RE    = re.compile(r'PSU\s+(?:AC|MAIN):\s+(\S+)\s+(.*\S)')
 FAN_TRAY_RE  = re.compile(r'FAN Tray (\d+):\s+([\d.]+)\s+-\s+(\d+),\s*HV\s*=\s*(\d+)')
 MAX34460_RE  = re.compile(r'MAX34460 CRC read (0x[0-9A-Fa-f]+)')
 ZL_FW_RE     = re.compile(r'ZL30733.*Device Firmware Version read (0x[0-9A-Fa-f]+)')
@@ -211,6 +211,7 @@ def _new_loop_dict(device='unknown', prev=None):
         mac_address       = None,
         lua_commit        = None,
         lua_date          = None,
+        lua_msg           = None,
         lua_dirty_files   = None,
         boot_lines        = [],
         _lines            = [],
@@ -245,7 +246,7 @@ def _new_loop_dict(device='unknown', prev=None):
                   'fan_trays', 'max34460_crc',
                   'zl30733_fw', 'zl30733_cfg',
                   'gnss_ver', 'fpga_date',
-                  'lua_commit', 'lua_date', 'lua_dirty_files',
+                  'lua_commit', 'lua_date', 'lua_msg', 'lua_dirty_files',
                   'product'):
             if prev.get(k):
                 d[k] = prev[k]
@@ -269,6 +270,7 @@ def parse_log(filepath):
     in_boot  = False
     lua_state      = 0
     lua_commit_tmp = None
+    lua_msg_tmp    = ''
     lua_dirty_tmp  = []
     in_report      = False
     device         = 'unknown'
@@ -311,6 +313,7 @@ def parse_log(filepath):
                 in_report  = False
                 lua_state  = 0
                 lua_commit_tmp = None
+                lua_msg_tmp    = ''
                 raw_buf    = [raw]
                 continue
             else:
@@ -342,6 +345,7 @@ def parse_log(filepath):
                 in_report  = False
                 lua_state  = 0
                 lua_commit_tmp = None
+                lua_msg_tmp    = ''
                 raw_buf    = [raw]
                 continue
 
@@ -484,12 +488,21 @@ def parse_log(filepath):
             elif not re.search(r'\bAuthor\b', line):
                 lua_state = 0
         elif lua_state == 3:
-            # Aguarda cabecalho da secao de arquivos modificados
+            # Aguarda cabecalho da secao de arquivos modificados.
+            # Usa a linha original (sem strip total) para preservar a indentacao
+            # do corpo do commit git (4 espacos), que TS_STRIP_RE consumiria.
             if 'Modificados nao commitados' in stripped:
+                if cur.get('lua_msg') is None and lua_msg_tmp:
+                    cur['lua_msg'] = lua_msg_tmp
                 lua_state = 4
-            elif stripped and not stripped.startswith('=') and not stripped.startswith(' '):
-                # Linha de sistema — saiu do bloco lua
-                lua_state = 0
+            else:
+                post_ts = re.sub(r'^\[[^\]]*\]\s?', '', line)
+                if post_ts.startswith(' ') and stripped:
+                    lua_msg_tmp = stripped   # linha indentada = assunto do commit
+                elif stripped and not stripped.startswith('=') and not post_ts.startswith(' '):
+                    if cur.get('lua_msg') is None and lua_msg_tmp:
+                        cur['lua_msg'] = lua_msg_tmp
+                    lua_state = 0
         elif lua_state == 4:
             # Coleta linhas de arquivos modificados ate o separador final
             if re.match(r'={5,}', stripped):
@@ -1423,6 +1436,7 @@ def build(loops, filepath, sensor_keys, ref_ok):
     fpga_date  = _first('fpga_date')
     lua_sha1   = _first('lua_commit')
     lua_dt     = _first('lua_date')
+    lua_msg    = _first('lua_msg')
 
     fan_trays_global = {}
     for l in loops:
@@ -1459,6 +1473,8 @@ def build(loops, filepath, sensor_keys, ref_ok):
     if lua_sha1:
         date_cp = lua_date_short(lua_dt) if lua_dt else ''
         copy_lines.append(f"Lua: {lua_sha1}" + (f"  ({date_cp})" if date_cp else ""))
+        if lua_msg:
+            copy_lines.append(f"  {lua_msg}")
     lua_dirty_copy = next((l.get('lua_dirty_files') for l in loops
                            if l.get('lua_dirty_files') is not None), None)
     if lua_dirty_copy:
@@ -1524,6 +1540,13 @@ def build(loops, filepath, sensor_keys, ref_ok):
                 f'<td class="dk">data</td><td class="dv">{date_disp}</td>'
                 f'</tr>'
             )
+            if lua_msg:
+                rows.append(
+                    f'<tr>'
+                    f'<td class="dk">msg</td>'
+                    f'<td class="dv" colspan="7" style="font-style:italic;color:#555">{lua_msg}</td>'
+                    f'</tr>'
+                )
         if lua_dirty:
             files_html = '&nbsp; '.join(
                 f'<span style="font-family:monospace;font-size:.72rem">{f}</span>'
