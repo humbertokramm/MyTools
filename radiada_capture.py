@@ -36,7 +36,6 @@ CONFIG = {
     'traces':   [('Trace1', 'Max'), ('Trace2', 'Med')],
     'saida':    r'T:\1berto\Medidas',  # pasta raiz; sera criada uma subpasta com a data
     'bands':[
-        [30e6,1000e6],
         [30e6,130e6],
         [130e6,230e6],
         [230e6,330e6],
@@ -49,7 +48,6 @@ CONFIG = {
         [930e6,1000e6],
     ],
 }
-CONFIG['saida'] = CONFIG['saida']+'\\' + CONFIG['pol']+'\\' + CONFIG['tensao']
 # -----------------------------------------------------------------------
 
 
@@ -126,9 +124,9 @@ def capturar(sa, modo, cfg, pasta):
 def main():
     cfg = CONFIG
 
-    # cria pasta de saida com subpasta de data
+    # cria pasta de saida: \Radiada\data\polarizacao\tensao
     data_str = datetime.now().strftime('%Y-%m-%d')
-    pasta = os.path.join(cfg['saida'], data_str)
+    pasta = os.path.join(cfg['saida'], 'Radiada', data_str, cfg['pol'], cfg['tensao'])
     if not os.path.exists(pasta):
         os.makedirs(pasta)
     print('Pasta de saida: ' + pasta)
@@ -138,6 +136,7 @@ def main():
     print('Conectando em ' + resource + ' ...')
     sa = SA(resource)
     sa.set_fullscreen(True)
+    limit_saved = False
 
     try:
         for local in ['EUT','Ambiente']:
@@ -147,19 +146,38 @@ def main():
                 print('\nDesligue o EUT')
             _screen_blink()
 
-            for i in CONFIG['bands']:
+            # bandas divididas + full band (menor -> maior freq) por ultimo
+            full_band = [min(b[0] for b in cfg['bands']),
+                         max(b[1] for b in cfg['bands'])]
+            for i in cfg['bands'] + [full_band]:
+                is_full = (i is full_band)
                 cfg['freq_ini'] = i[0]
                 cfg['freq_fim'] = i[1]
+                destino = os.path.join(pasta, 'full_band') if is_full else pasta
+                if not os.path.exists(destino):
+                    os.makedirs(destino)
                 # carrega state e configura faixa
                 sa.load_state(state[cfg['classe']])
                 sa.set_freq_range(cfg['freq_ini'], cfg['freq_fim'])
-                print('State carregado. Faixa: {:.0f} MHz - {:.0f} MHz'.format(
-                    cfg['freq_ini'] / 1e6, cfg['freq_fim'] / 1e6
+                print('State carregado. Faixa: {:.0f} MHz - {:.0f} MHz{}'.format(
+                    cfg['freq_ini'] / 1e6, cfg['freq_fim'] / 1e6,
+                    '  (FULL BAND)' if is_full else ''
                 ))
-                
+
+                # salva o limite do state uma unica vez
+                if not limit_saved:
+                    lim_path = os.path.join(
+                        pasta, 'Radiada - Limite - Classe ' + cfg['classe'] + '.csv'
+                    )
+                    if sa.export_limit_csv(lim_path):
+                        limit_saved = True
+                    else:
+                        print('AVISO: nenhuma limit line habilitada no state!')
+                        limit_saved = True  # nao insiste nas proximas bandas
+
                 # ---- local -------------------------------------------------------
                 _beep_alerta()
-                paths = capturar(sa, local, cfg, pasta)
+                paths = capturar(sa, local, cfg, destino)
                 for p in paths:
                     print(p)
 

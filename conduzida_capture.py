@@ -97,7 +97,7 @@ def main():
     cfg = CONFIG
 
     data_str = datetime.now().strftime('%Y-%m-%d')
-    pasta = os.path.join(cfg['saida'], data_str)
+    pasta = os.path.join(cfg['saida'], 'Conduzida', data_str)
     if not os.path.exists(pasta):
         os.makedirs(pasta)
     print('Pasta de saida: ' + pasta)

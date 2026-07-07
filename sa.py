@@ -85,6 +85,13 @@ class SA:
             return
         self.driver.export_csv(trace, path)
 
+    def export_limit_csv(self, path):
+        if not path.endswith('.csv'):
+            path = path + '.csv'
+        if self._file_exists(path):
+            return True
+        return self.driver.export_limit_csv(path)
+
     # ------------------------------------------------------------------
     # Delegate -- screen
     # ------------------------------------------------------------------

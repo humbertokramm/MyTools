@@ -198,6 +198,54 @@ class AgilentSA:
         print('CSV salvo: ' + path + '  (' + str(len(amp)) + ' pontos)')
 
     # ------------------------------------------------------------------
+    # Limit line export
+    # ------------------------------------------------------------------
+
+    def capture_limit(self):
+        """Retorna (freq_hz, amp) da primeira limit line habilitada, ou None."""
+        for n in range(1, 7):
+            try:
+                st = self.inst.query(':CALCulate:LLINe' + str(n) + ':STATe?').strip()
+                if st != '1':
+                    continue
+                raw = self.inst.query(':CALCulate:LLINe' + str(n) + ':DATA?').strip()
+            except Exception:
+                continue
+            vals = [float(v) for v in raw.split(',')]
+            # triplas: freq_Hz, amplitude, connected
+            freq = vals[0::3]
+            amp  = vals[1::3]
+            if freq:
+                return freq, amp
+        return None
+
+    def export_limit_csv(self, path):
+        """Salva a limit line ativa em CSV (X em MHz, compativel com radiada_plot).
+
+        Retorna True se salvou, False se nenhuma limit line habilitada.
+        """
+        result = self.capture_limit()
+        if result is None:
+            return False
+        freq, amp = result
+
+        lines = [
+            'Limit',
+            'Number of Points,' + str(len(freq)),
+            'X Axis Units,MHz',
+            'Y Axis Units,dBuV',
+            'DATA',
+        ]
+        for f, a in zip(freq, amp):
+            lines.append('{:.10g},{:.15g}'.format(f / 1e6, a))
+
+        with open(path, 'w') as fh:
+            fh.write('\n'.join(lines))
+
+        print('Limite salvo: ' + path + '  (' + str(len(freq)) + ' pontos)')
+        return True
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
