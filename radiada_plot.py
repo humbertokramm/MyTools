@@ -11,6 +11,7 @@ Uso -- combinar sub-bandas (glob pattern):
 
 import sys
 import os
+import re
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
@@ -263,9 +264,26 @@ def analyze(trace_sets, limit_path=None):
             return '{} arq.'.format(len(p))
         return os.path.basename(p) if '*' not in str(p) else str(p)
 
+    def _title_info(p):
+        """Extrai (pol, classe, tensao) do nome do arquivo EUT, ou None."""
+        if isinstance(p, (list, tuple)):
+            p = p[0]
+        name = os.path.basename(str(p))
+        m = re.search(
+            r'Radiada - (.+?) - EUT - Classe (\S+) (.+?)V(?: - .+)?\.csv$',
+            name
+        )
+        return m.groups() if m else None
+
     eut0_p, amb0_p, _ = trace_sets[0]
-    ax.set_title('Emissão Radiada  —  ' + _lp(eut0_p) + '  vs  ' + _lp(amb0_p),
-                 color='#eeeeee')
+    info = _title_info(eut0_p)
+    if info:
+        pol, classe, tensao = info
+        title = ('Emissão Radiada  —  Polarização {}  —  {}V  —  Classe {}'
+                 .format(pol, tensao, classe))
+    else:
+        title = 'Emissão Radiada  —  ' + _lp(eut0_p) + '  vs  ' + _lp(amb0_p)
+    ax.set_title(title, color='#eeeeee')
     ax.set_xlabel('Frequência (MHz)')
     ax.set_ylabel('Amplitude (dBuV)')
     ax.grid(True, which='major', color=GRID, lw=0.8)
