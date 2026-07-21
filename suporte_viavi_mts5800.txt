@@ -1,0 +1,131 @@
+================================================================================
+MENSAGEM PARA O SUPORTE VIAVI - MTS-5800-100G (PORTUGUES)
+================================================================================
+
+Assunto: Servidor de Remote Control SCPI (porta 8000) trava em automacao de
+longa duracao - como recuperar/reiniciar remotamente sem reboot?
+
+Equipamento:
+- Modelo: MTS-5800-100G
+- Serial: XMSE0203150020
+- Firmware bundle: 25248 (Transport 33.2.0)
+- Plataforma/SO: Yoda X11 (VIAVI Instrument Platform Distro) 25.1.1, kernel
+  5.10.147 (armv7l)
+- Aplicacao em uso: TermEth100GL2Traffic_101 (100G Ethernet L2 Traffic)
+- Usuario de acesso SSH: tb-5800
+
+Contexto de uso:
+Automatizamos um teste de longa duracao (centenas de ciclos) que controla o
+MTS remotamente via SCPI sobre SSH. A cada ciclo o nosso script:
+  1. abre uma conexao SSH (usuario tb-5800);
+  2. abre canais para a porta 8000, descobre a porta do modulo
+     (MOD:FUNC:PORT? BOTH,BASE,"BERT") e a porta de remote control
+     (:SYST:FUNC:PORT? BOTH,BASE,"BERT"), envia *REM VISIBLE FULL;
+  3. executa os comandos (ex.: :SOURCE:MAC:TRAFFIC ON/OFF, :INITiate/:ABORt,
+     leitura de contadores via :SENSe:DATA?);
+  4. encerra a sessao com :SESSion:END e fecha a conexao SSH.
+Sao ~2 conexoes por ciclo (uma para iniciar o trafego, outra ~10 min depois
+para ler os resultados).
+
+Problema:
+Apos varios ciclos, o servidor SCPI da porta 8000 para de responder: a conexao
+TCP e aceita, mas a leitura das respostas SCPI da timeout (nenhuma resposta,
+nem para *IDN?). O SSH e o VNC continuam funcionando normalmente - apenas o
+remote control SCPI trava. Inspecionando com `ss -tan`, vemos varias conexoes
+em estado CLOSE_WAIT na porta 8000 com bytes presos no Recv-Q, sugerindo que o
+processo servidor (IsuManager / remote-control.service) parou de aceitar/fechar
+conexoes. Uma vez travado, so o reboot do instrumento restaura o funcionamento.
+
+O que ja verificamos:
+- O usuario tb-5800 nao tem privilegio para reiniciar o servico nem o
+  instrumento: `systemctl restart remote-control.service` retorna "Interactive
+  authentication required" (polkit) e `sudo` informa que tb-5800 nao esta no
+  sudoers. `systemctl reboot` tambem e negado.
+- Nao ha botao de restart/reboot na tela de gerenciamento acessivel por VNC.
+
+Perguntas:
+1. Existe um comando ou procedimento SUPORTADO para reiniciar/recuperar o
+   servico de remote control SCPI (porta 8000) SEM reiniciar o instrumento
+   inteiro?
+2. Existe uma forma SUPORTADA de reiniciar o instrumento remotamente (via SCPI,
+   SSH ou API), considerando que o usuario disponivel (tb-5800) nao tem
+   privilegio administrativo?
+3. Qual e a forma recomendada de usar o remote control SCPI em automacao de
+   longa duracao (centenas de ciclos)? Devemos manter UMA sessao de remote
+   control aberta durante toda a operacao em vez de abrir/fechar a cada
+   comando? Ha limite de sessoes concorrentes ou timeout de inatividade
+   relevante?
+4. Ha alguma configuracao (timeout, numero de conexoes, backlog) que ajude a
+   evitar o acumulo de conexoes que leva o servidor SCPI a travar?
+
+Objetivo: operar o equipamento de forma remota e nao supervisionada; hoje,
+quando o SCPI trava, precisamos de acesso fisico para reiniciar, o que
+inviabiliza a operacao remota. Agradecemos orientacao sobre o metodo correto.
+
+Obrigado.
+
+
+================================================================================
+MESSAGE FOR VIAVI SUPPORT - MTS-5800-100G (ENGLISH)
+================================================================================
+
+Subject: SCPI Remote Control server (port 8000) hangs during long-running
+automation - how to recover/restart it remotely without a reboot?
+
+Instrument:
+- Model: MTS-5800-100G
+- Serial: XMSE0203150020
+- Firmware bundle: 25248 (Transport 33.2.0)
+- Platform/OS: Yoda X11 (VIAVI Instrument Platform Distro) 25.1.1, kernel
+  5.10.147 (armv7l)
+- Application in use: TermEth100GL2Traffic_101 (100G Ethernet L2 Traffic)
+- SSH login used: tb-5800
+
+Usage context:
+We run a long-duration automated test (hundreds of cycles) that controls the
+MTS remotely via SCPI over SSH. Each cycle our script:
+  1. opens an SSH connection (user tb-5800);
+  2. opens channels to port 8000, discovers the module port
+     (MOD:FUNC:PORT? BOTH,BASE,"BERT") and the remote-control port
+     (:SYST:FUNC:PORT? BOTH,BASE,"BERT"), sends *REM VISIBLE FULL;
+  3. runs the commands (e.g. :SOURCE:MAC:TRAFFIC ON/OFF, :INITiate/:ABORt,
+     counter reads via :SENSe:DATA?);
+  4. ends the session with :SESSion:END and closes the SSH connection.
+That is ~2 connections per cycle (one to start traffic, another ~10 min later
+to read results).
+
+Problem:
+After several cycles, the SCPI server on port 8000 stops responding: the TCP
+connection is accepted, but reading the SCPI reply times out (no response, not
+even to *IDN?). SSH and VNC keep working normally - only the SCPI remote control
+hangs. Using `ss -tan` we see several connections in CLOSE_WAIT on port 8000
+with bytes stuck in the Recv-Q, suggesting the server process (IsuManager /
+remote-control.service) stopped accepting/closing connections. Once hung, only
+an instrument reboot restores operation.
+
+What we have already checked:
+- The tb-5800 user has no privilege to restart the service or the instrument:
+  `systemctl restart remote-control.service` returns "Interactive
+  authentication required" (polkit), and `sudo` reports that tb-5800 is not in
+  the sudoers file. `systemctl reboot` is also denied.
+- There is no restart/reboot button on the power management screen reachable
+  via VNC.
+
+Questions:
+1. Is there a SUPPORTED command or procedure to restart/recover the SCPI remote
+   control service (port 8000) WITHOUT rebooting the whole instrument?
+2. Is there a SUPPORTED way to reboot the instrument remotely (via SCPI, SSH or
+   API), given that the available user (tb-5800) has no administrative
+   privilege?
+3. What is the recommended way to use SCPI remote control for long-running
+   automation (hundreds of cycles)? Should we keep ONE remote-control session
+   open for the whole operation instead of opening/closing per command? Is there
+   a concurrent-session limit or idle timeout we should be aware of?
+4. Is there any setting (timeout, connection count, backlog) that helps avoid
+   the connection buildup that eventually hangs the SCPI server?
+
+Goal: operate the instrument remotely and unattended. Today, when SCPI hangs we
+need physical access to reboot, which prevents remote operation. We would
+appreciate guidance on the correct method.
+
+Thank you.

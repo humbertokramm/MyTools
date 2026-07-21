@@ -40,7 +40,7 @@ import pyvisa
 import numpy as np
 from datetime import datetime
 
-rm = pyvisa.ResourceManager()
+rm = pyvisa.ResourceManager(_backend)
 
 def _open_inst(rm, resource, timeout=30000):
     """Open resource, falling back to auto-detect if not found."""
@@ -154,7 +154,7 @@ import json, sys, base64, time
 import pyvisa
 from datetime import datetime
 
-rm = pyvisa.ResourceManager()
+rm = pyvisa.ResourceManager(_backend)
 
 def _open_inst(rm, resource, timeout=30000):
     if resource != 'auto':
@@ -253,6 +253,34 @@ try:
 
         print(json.dumps({'png': base64.b64encode(raw).decode()}))
 
+    # ── Keysight / Agilent ──────────────────────────────────────────────────────
+    elif 'KEYSIGHT' in idn.upper() or 'AGILENT' in idn.upper():
+        ch = _channel.replace('CH', 'CHAN')   # CH1 → CHAN1
+
+        if _info and 'label' in _info:
+            inst.write(f':{ch}:LABel "{_info["label"]}"')
+            time.sleep(delay)
+            inst.write(':DISPlay:LABel ON')
+            time.sleep(delay)
+
+        if _info and 'meas' in _info:
+            _MEAS_MAP = {
+                'Vmax': 'VMAX', 'Vmin': 'VMIN', 'Vpp': 'VPP',
+                'Vamp': 'VAMPlitude', 'Vtop': 'VTOP', 'Vbase': 'VBASe',
+                'Vavg': 'VAVerage', 'Vrms': 'VRMS', 'Frequency': 'FREQuency',
+                'Period': 'PERiod', 'RiseTime': 'RISetime', 'FallTime': 'FALLtime',
+            }
+            for v in _info['meas']:
+                if v:
+                    mtype = _MEAS_MAP.get(v, v)
+                    inst.write(f':MEASure:{mtype} {ch}')
+                    time.sleep(delay)
+
+        # InfiniiVision: :DISPlay:DATA? <format>,<palette>
+        raw = inst.query_binary_values(':DISPlay:DATA? PNG,COLor',
+                                       datatype='B', container=bytes)
+        print(json.dumps({'png': base64.b64encode(raw).decode()}))
+
     else:
         print(json.dumps({'error': f'screenshot not implemented for: {idn}'}))
         sys.exit(1)
@@ -267,7 +295,7 @@ import json, sys, time
 import pyvisa
 
 
-rm = pyvisa.ResourceManager()
+rm = pyvisa.ResourceManager(_backend)
 
 def _open_inst(rm, resource, timeout=5000):
     if resource != 'auto':
@@ -331,7 +359,7 @@ _WAIT_TEMPLATE = r'''
 import json, sys, time
 import pyvisa
 
-rm = pyvisa.ResourceManager()
+rm = pyvisa.ResourceManager(_backend)
 
 def _open_inst(rm, resource, timeout=5000):
     if resource != 'auto':
@@ -381,7 +409,7 @@ _SCPI_TEMPLATE = r'''
 import json, sys
 import pyvisa
 
-rm = pyvisa.ResourceManager()
+rm = pyvisa.ResourceManager(_backend)
 
 def _open_inst(rm, resource, timeout=10000):
     if resource != 'auto':
@@ -441,6 +469,10 @@ class SshScope:
         password (str, optional): SSH password. Leave ``None`` to use key
             authentication (system SSH agent / ``~/.ssh/id_*``).
         debug    (bool): Print SSH stderr output. Default ``False``.
+        visa_backend (str): pyvisa backend used on the remote host.
+            ``'@py'`` (default) uses pyvisa-py — talks USBTMC directly via
+            pyusb, no NI-VISA / nipalk.ko needed. Use ``''`` to let the
+            remote pyvisa pick its default (e.g. NI-VISA).
     """
 
     def __init__(
@@ -451,6 +483,7 @@ class SshScope:
         port:          int  = 22,
         password:      str  = None,
         debug:         bool = False,
+        visa_backend:  str  = '@py',
     ):
         try:
             import paramiko
@@ -463,6 +496,7 @@ class SshScope:
         self.host          = host
         self.user          = user
         self.visa_resource = visa_resource
+        self.visa_backend  = visa_backend
         self.debug         = debug
 
         # Pending display settings (set by set_channel_settings, consumed by capture_screen)
@@ -490,16 +524,20 @@ class SshScope:
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _build_script(template: str, **kwargs) -> str:
+    def _build_script(self, template: str, **kwargs) -> str:
         """Prepend variable assignments to a template script.
 
         Each keyword argument becomes a Python assignment at the top of the
         generated script, using ``repr()`` for safe serialisation::
 
+            _backend  = '@py'
             _resource = 'USB::0x0699::...'
             _channel  = 'CH1'
+
+        The VISA backend (``_backend``) is injected automatically from
+        ``self.visa_backend`` so every remote script uses the same backend.
         """
+        kwargs.setdefault('backend', self.visa_backend)
         lines = [f'_{k} = {v!r}' for k, v in kwargs.items()]
         return '\n'.join(lines) + '\n' + template
 

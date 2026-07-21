@@ -14,13 +14,16 @@ Por que telnet e nao SNMP/PCGA:
   ela fica robusta e sem Tera Term.
 
 Uso:
-  python aciona_porta.py <CANAL A-D> <CMD>
-    CMD: 1 = desliga (Stop testing / volta ao configurado)
-         2 = liga    (Start Alarm test  -> FORCE_ALARM)
-         3 = forca desligado (Start No Alarm test -> FORCE_NO_ALARM)
+  python estagiario.py <CANAL A-D> <CMD>
+    CANAL e CMD nao sao case-sensitive (aceitam maiuscula ou minuscula).
+    CMD: on     = liga    (Start Alarm test  -> FORCE_ALARM)
+         off    = desliga (Stop testing / volta ao configurado)
+         noalarm= forca desligado (Start No Alarm test -> FORCE_NO_ALARM)
          status = so le o estado atual, sem acionar
-  Ex.: python aciona_porta.py C 2      -> liga a porta 3
-       python aciona_porta.py C status -> le o estado da porta 3
+         (aliases numericos aceitos: 1=off, 2=on, 3=noalarm)
+  Ex.: python estagiario.py C on      -> liga a porta 3
+       python estagiario.py c off     -> desliga a porta 3
+       python estagiario.py C status  -> le o estado da porta 3
 
 Saida/erros vao para a tela e para aciona_porta.log (append, com timestamp).
 Codigo de saida: 0 = ok, 1 = erro (util para o .bat testar %ERRORLEVEL%).
@@ -63,9 +66,21 @@ class SessaoPresa(Exception):
     sessao telnet anterior ainda nao expirou. Some sozinha em ~15-20 s."""
 
 CANAL_PORTA = {"A": 1, "B": 2, "C": 3, "D": 4}
-CMD_NOME = {"1": "Stop testing (desliga)",
-            "2": "Start Alarm test (liga)",
-            "3": "Start No Alarm test (forca desligado)"}
+
+# Comando do usuario -> (tecla enviada ao menu, descricao no log).
+# "on"/"off" sao os nomes preferidos; 1/2/3 seguem aceitos por retrocompat
+# (a rebootVHW.ttl e os .bat de ciclo ainda chamam com 1/2).
+CMD_MAP = {
+    "off": ("1", "OFF - Stop testing (desliga)"),
+    "on":  ("2", "ON - Start Alarm test (liga)"),
+    "noalarm": ("3", "Force No Alarm (forca desligado)"),
+    # aliases numericos (retrocompat):
+    "1": ("1", "OFF - Stop testing (desliga)"),
+    "2": ("2", "ON - Start Alarm test (liga)"),
+    "3": ("3", "Force No Alarm (forca desligado)"),
+}
+# comandos validos mostrados nas mensagens de erro (os preferidos)
+CMDS_VALIDOS = "on, off, status (aliases: 1=off, 2=on, 3=noalarm)"
 
 
 def log(msg):
@@ -234,13 +249,13 @@ def main():
     if len(sys.argv) < 3:
         print(__doc__)
         return 1
-    canal = sys.argv[1].strip().upper()
-    cmd = sys.argv[2].strip().lower()
+    canal = sys.argv[1].strip().upper()      # A-D, aceita maiuscula/minuscula
+    cmd = sys.argv[2].strip().lower()        # on/off/status, idem
     if canal not in CANAL_PORTA:
         log(f"ERRO: canal invalido '{sys.argv[1]}' (use A, B, C ou D).")
         return 1
-    if cmd != "status" and cmd not in CMD_NOME:
-        log(f"ERRO: cmd invalido '{sys.argv[2]}' (use 1, 2, 3 ou status).")
+    if cmd != "status" and cmd not in CMD_MAP:
+        log(f"ERRO: comando invalido '{sys.argv[2]}' (use {CMDS_VALIDOS}).")
         return 1
     portnum = CANAL_PORTA[canal]
 
@@ -260,10 +275,11 @@ def main():
                 _sair(t)
                 return 0
 
+            tecla, descricao = CMD_MAP[cmd]
             t.clear()
-            t.send(cmd)                     # 1/2/3 (a tela da porta ja esta estavel)
+            t.send(tecla)                   # 1/2/3 (a tela da porta ja esta estavel)
             st = le_status(t)               # ENTER + le confirmacao
-            log(f"OK: porta {portnum} ({canal}) -> {CMD_NOME[cmd]}; status: {st}")
+            log(f"OK: porta {portnum} ({canal}) -> {descricao}; status: {st}")
             _sair(t)
             return 0
 

@@ -80,6 +80,7 @@ SC -->|captura CSV| CS
 | `dirHandle.py` | `print_colored`, `sanitize_filename`, `select_file`, `select_from_list` | Output colorido, seleção interativa de arquivos |
 | `intranetVersionChecker.py` | `check_update`, `update_local` | Verifica e baixa versões de firmware da intranet |
 | `updateLibScript.py` | `check_site`, `check_and_pull` | Atualiza repositórios Git locais |
+| `registrarhook.py` | CLI | Instala o hook `commit-msg` do Gerrit num repo (Change-Id automático); baixa via `pscp`/Pageant com fallback HTTPS |
 
 ---
 
@@ -119,6 +120,17 @@ CS.hold()
 python serializefile.py COM3        # porta específica
 python serializefile.py COM3 -p     # abre PuTTY após o envio
 ```
+
+### Instalar o hook commit-msg do Gerrit (Change-Id automático)
+
+```bash
+python registrarhook.py                       # no diretório do repo
+python registrarhook.py C:\Projetos\dmos-docs --test   # aponta o repo e valida
+python registrarhook.py --https               # força o fallback HTTPS
+```
+
+> Neste PC o `py` é Python 3.4 — use o 3.14:
+> `%LOCALAPPDATA%\Programs\Python\Python314\python.exe registrarhook.py`
 
 ---
 

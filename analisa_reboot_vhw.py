@@ -25,6 +25,7 @@ Codigo de saida: 0 = todos os ciclos OK, 1 = houve falha, 2 = erro de uso.
 """
 import argparse
 import csv
+import json
 import os
 import re
 import sys
@@ -46,6 +47,18 @@ ALARMES_ESPERADOS = {
 # Porta ligada ao testset: o In dela conta o que o testset enviou e o Out o que
 # retornou, entao In > Out nela reflete a perda total do anel, nao causa local.
 PORTA_ENTRADA = "hundred-gigabit-ethernet 1/1/1"
+
+# O firmware reporta LIMITE ERRADO para os sensores de PSU (0~75 para ambos).
+# Limites corretos (spec): PSU ambient 0~55 C, PSU hotspot 0~95 C. O analisador
+# reavalia a PSU pela temperatura real contra estes limites, ignorando o status
+# HIGH indevido do equipamento.
+LIMITE_PSU_CORRETO = {"PSU ambient": 55.0, "PSU hotspot": 95.0}
+
+# Modo conservador (testset sempre ligado, sem traffic-off antes de ler):
+# In != Out por poucos pacotes NAO e perda - e o trafego em transito no instante
+# da leitura (medido: ruido simetrico de +-1..3). So |In-Out| acima desta
+# tolerancia conta como perda real. Errors/Discards nao tem ruido (sempre valem).
+TOL_TRANSITO = 10
 
 RE_LINHA = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.(\d{3})\]\s?(.*)$")
 RE_CICLO_INI = re.compile(r"===== CICLO (\d+) de (\d+) - iniciando em")
@@ -83,6 +96,7 @@ def novo_ciclo(n, inicio, total):
         "envs": [],              # snapshots do show environment: [[(nome, temp, status), ...], ...]
                                  # (a macro tira um apos o link up - frio - e outro no fim do ciclo)
         "erros_macro": [],       # linhas '!!!'
+        "testset_infra": False,  # watchdog/traceback do mts.py (falha de conexao, nao de dados)
         "marcador": None,        # texto do CONCLUIDO/FALHA
         "completo": False,
     }
@@ -145,6 +159,9 @@ def analisar(caminho):
                 continue
             if txt_semprompt.startswith("!!!"):
                 c["erros_macro"].append(txt_semprompt)
+                continue
+            if "WATCHDOG" in txt_semprompt or "Traceback (most recent" in txt_semprompt:
+                c["testset_infra"] = True
                 continue
 
             # ----- poll de link -----
@@ -237,19 +254,46 @@ def multiplicador(iface):
     return MULTIPLICADOR.get(tipo, 1)
 
 
+# abreviacao do nome da interface para a coluna "causa raiz"
+ABREV_TIPO = {
+    "hundred-gigabit-ethernet": "100G",
+    "four-hundred-g-ethernet": "400G",
+    "two-hundred-g-ethernet": "200G",
+    "ten-gigabit-ethernet": "10G",
+    "forty-gigabit-ethernet": "40G",
+    "twenty-five-gigabit-ethernet": "25G",
+    "gigabit-ethernet": "1G",
+}
+
+
+def abreviar(iface):
+    """'hundred-gigabit-ethernet 1/1/10' -> '100G-10'."""
+    partes = iface.split(" ")
+    tipo = partes[0]
+    porta = partes[1] if len(partes) > 1 else ""
+    num = porta.split("/")[-1] if porta else ""
+    ab = ABREV_TIPO.get(tipo, tipo)
+    return f"{ab}-{num}" if num else ab
+
+
 def frames_porta(cont, direcao):
     return sum(cont.get(f"{direcao} {k}", 0)
                for k in ("Unicast Pkts", "Broadcast Pkts", "Multicast Pkts"))
 
 
 def avaliar(c):
-    """Retorna (ok, lista de falhas descritas, perda_testset_pct)."""
+    """Retorna (ok, lista de falhas descritas, perda_testset_pct, causa_raiz).
+
+    causa_raiz = lista de modulos abreviados (ex.: ['100G-10']) apontados como
+    origem do problema, para a coluna da tabela.
+    """
     falhas = []
     perda_pct = None
+    causa = []
 
     if not c["completo"]:
         # ciclo em andamento (ou teste interrompido): nao avalia o resto
-        return (False, ["ciclo incompleto no log (teste interrompido ou em andamento)"], None)
+        return (False, ["ciclo incompleto no log (teste interrompido ou em andamento)"], None, [])
 
     for e in c["erros_macro"]:
         falhas.append(f"macro: {e}")
@@ -257,10 +301,15 @@ def avaliar(c):
     if c["marcador"] and "CONCLUIDO OK" not in c["marcador"]:
         falhas.append(f"marcador da macro: {c['marcador']}")
 
-    # testset
-    if c["tx"] is None or c["rx"] is None:
-        falhas.append("sem resultados do testset (tunel SSH caido? ver secao 'testset: results')")
-    else:
+    tem_testset = c["tx"] is not None
+
+    # infra do testset (so relevante se este teste comunica com o MTS)
+    if c["testset_infra"]:
+        falhas.append("FALHA DE INFRA do testset (watchdog/traceback do mts.py; "
+                      "conexao SSH com o MTS travou/caiu) - nao e perda de dados do DUT")
+
+    if tem_testset:
+        # ---- MODO TESTSET: TX do MTS e a referencia; anel em serie ----
         if c["tx"] == 0:
             falhas.append("testset transmitiu 0 frames (trafego nao ligou?)")
         else:
@@ -277,50 +326,67 @@ def avaliar(c):
         if c["pcs"] not in (None, "1"):
             falhas.append(f"testset sem PCS sync (={c['pcs']})")
 
-    # portas: frames esperados = TX * multiplicador.
-    # A ligacao e em serie (testset entra na porta 1, passa por todas e volta),
-    # entao uma perda numa porta reduz a contagem de todas as portas a jusante.
-    # CAUSA RAIZ = porta assimetrica: Out > In significa que ela transmitiu para
-    # o modulo/loop e o pacote nao retornou (perda no modulo); In > Out significa
-    # descarte interno no DUT. Portas com In == Out abaixo do esperado sao apenas
-    # consequencia da perda a montante.
-    if c["tx"]:
-        assimetricas = []
-        consequencia = []
+        if c["tx"]:
+            # CAUSA RAIZ = porta assimetrica (In != Out). Portas In==Out abaixo
+            # do esperado (TX*mult) sao consequencia da perda a montante no anel.
+            assimetricas = []
+            consequencia = []
+            for iface, cont in sorted(c["portas"].items()):
+                in_f = frames_porta(cont, "In")
+                out_f = frames_porta(cont, "Out")
+                esperado = c["tx"] * multiplicador(iface)
+                if in_f != out_f:
+                    assimetricas.append((iface, in_f, out_f))
+                elif in_f != esperado:
+                    dif = esperado - in_f
+                    pct = 100.0 * dif / esperado if esperado else 0.0
+                    consequencia.append(f"{iface} (faltam {dif:,}; {pct:.6f}%)")
+            outras = [a for a in assimetricas if a[0] != PORTA_ENTRADA]
+            for iface, in_f, out_f in assimetricas:
+                if iface == PORTA_ENTRADA and outras:
+                    falhas.append(
+                        f"{iface} (porta de entrada): In-Out = {in_f - out_f:+,} - "
+                        "reflete a perda total do anel (causa esta a jusante)")
+                elif out_f > in_f:
+                    falhas.append(
+                        f"CAUSA RAIZ - {iface}: {out_f - in_f:,} pacote(s) perdido(s) no "
+                        f"modulo/loop desta porta (Out={out_f:,} > In={in_f:,})")
+                    causa.append(abreviar(iface))
+                else:
+                    falhas.append(
+                        f"CAUSA RAIZ - {iface}: {in_f - out_f:,} pacote(s) descartado(s) "
+                        f"internamente pelo DUT (In={in_f:,} > Out={out_f:,})")
+                    causa.append(abreviar(iface))
+            if consequencia:
+                falhas.append(
+                    f"{len(consequencia)} porta(s) com contagem abaixo do esperado, "
+                    "consistentes (In == Out) - consequencia da perda a montante: "
+                    + ", ".join(consequencia))
+    else:
+        # ---- MODO CONSERVADOR: sem testset; perda = In != Out da propria porta ----
+        # (testset fica sempre ligado; nao ha referencia externa). Portas com
+        # In==0 e Out==0 sao ignoradas (nao entrou trafego a ser testado).
         for iface, cont in sorted(c["portas"].items()):
             in_f = frames_porta(cont, "In")
             out_f = frames_porta(cont, "Out")
-            esperado = c["tx"] * multiplicador(iface)
-            if in_f != out_f:
-                assimetricas.append((iface, in_f, out_f))
-            elif in_f != esperado:
-                dif = esperado - in_f
-                pct = 100.0 * dif / esperado if esperado else 0.0
-                consequencia.append(f"{iface} (faltam {dif:,}; {pct:.6f}%)")
-        outras = [a for a in assimetricas if a[0] != PORTA_ENTRADA]
-        for iface, in_f, out_f in assimetricas:
-            if iface == PORTA_ENTRADA and outras:
+            if in_f == 0 and out_f == 0:
+                continue
+            dif = in_f - out_f
+            if abs(dif) > TOL_TRANSITO:
                 falhas.append(
-                    f"{iface} (porta de entrada): In-Out = {in_f - out_f:+,} - "
-                    "reflete a perda total do anel (causa esta a jusante)")
-            elif out_f > in_f:
-                falhas.append(
-                    f"CAUSA RAIZ - {iface}: {out_f - in_f:,} pacote(s) perdido(s) no "
-                    f"modulo/loop desta porta (Out={out_f:,} > In={in_f:,})")
-            else:
-                falhas.append(
-                    f"CAUSA RAIZ - {iface}: {in_f - out_f:,} pacote(s) descartado(s) "
-                    f"internamente pelo DUT (In={in_f:,} > Out={out_f:,})")
-        if consequencia:
-            falhas.append(
-                f"{len(consequencia)} porta(s) com contagem abaixo do esperado, "
-                "consistentes (In == Out) - consequencia da perda a montante: "
-                + ", ".join(consequencia))
+                    f"CAUSA RAIZ - {iface}: In={in_f:,} Out={out_f:,} "
+                    f"dif={dif:+,} pacote(s) (> tolerancia {TOL_TRANSITO}; perda no modulo)")
+                causa.append(abreviar(iface))
+
+    # erros/descartes por porta (vale nos dois modos)
     for iface, cont in sorted(c["portas"].items()):
         for chave in ("In Errors", "Out Errors", "In Discards", "Out Discards"):
             v = cont.get(chave, 0)
             if v:
                 falhas.append(f"{iface}: {chave} = {v:,}")
+                ab = abreviar(iface)
+                if ab not in causa:
+                    causa.append(ab)
 
     # alarmes inesperados (apenas Active). Os da lista ALARMES_ESPERADOS nao
     # reprovam - aparecem na secao "alarmes ativos observados" para o
@@ -341,17 +407,65 @@ def avaliar(c):
             # contagem > 0 mas nenhum registro capturado: reporta por seguranca
             falhas.append(f"{c['criticos']} registro(s) de log severity critical")
 
-    # sensores fora do normal (TCVs em LOW/HIGH sao esperados na ciclagem;
-    # CPU, fabric e PSU fora do normal reprovam) - avalia todos os snapshots
+    # sensores fora do limite (avalia todos os snapshots):
+    #  - TCV em LOW/HIGH: esperado na ciclagem termica -> ignora.
+    #  - PSU: firmware reporta limite errado; reavalia pela temp real contra o
+    #    limite correto (LIMITE_PSU_CORRETO), ignorando o status HIGH indevido.
+    #  - CPU/fabric e demais: usa o status reportado pelo equipamento.
     fora = {}
     for snap in c["envs"]:
         for nome, temp, status in snap:
-            if status != "NORMAL" and not nome.startswith("TCV"):
-                fora.setdefault((nome, status), temp)
-    for (nome, status), temp in sorted(fora.items()):
-        falhas.append(f"sensor {nome}: {temp} C status={status}")
+            if nome.startswith("TCV"):
+                continue
+            limite = LIMITE_PSU_CORRETO.get(nome)
+            if limite is not None:
+                if temp > limite:
+                    chave = (nome, f"acima do limite correto {limite:.0f} C")
+                    if temp > fora.get(chave, -1e9):
+                        fora[chave] = temp
+            elif status != "NORMAL":
+                fora.setdefault((nome, f"status={status}"), temp)
+    for (nome, motivo), temp in sorted(fora.items()):
+        falhas.append(f"sensor {nome}: {temp} C ({motivo})")
 
-    return (not falhas, falhas, perda_pct)
+    return (not falhas, falhas, perda_pct, causa)
+
+
+def status_ciclo(c, c_ok, just):
+    if not c["completo"]:
+        return "INCOMPLETO"
+    if c_ok:
+        return "OK"
+    if c["n"] in just:
+        return "JUSTIFICADO"
+    return "FALHA"
+
+
+def detalhe_ciclo(c, falhas, just):
+    """Linhas informativas de um ciclo (para o modo --all): falhas + observacoes."""
+    linhas = list(falhas)
+    if c["n"] in just:
+        linhas.insert(0, f"JUSTIFICATIVA: {just[c['n']]}")
+    ativos = [f"{nome}[{fonte}]" for sev, fonte, st, nome in c["alarmes"] if st == "Active"]
+    if ativos:
+        linhas.append("alarmes ativos: " + ", ".join(sorted(set(ativos))))
+    sens_fim = c["envs"][-1] if c["envs"] else []
+    cpu = next((t for n, t, _ in sens_fim if n == "CPU Core"), None)
+    fab = next((t for n, t, _ in sens_fim if n == "Switch Fabric Core"), None)
+    tcvs = [t for snap in c["envs"] for n, t, _ in snap if n.startswith("TCV")]
+    psu = max((t for n, t, _ in sens_fim if n.startswith("PSU")), default=None)
+    if cpu is not None or tcvs:
+        tcv_rng = f"{min(tcvs):.0f}..{max(tcvs):.0f}" if tcvs else "-"
+        linhas.append(
+            f"temp: CPU {cpu if cpu is not None else '-'} / fabric "
+            f"{fab if fab is not None else '-'} / TCV {tcv_rng} / "
+            f"PSU {psu if psu is not None else '-'} C")
+    downs = sum(c["link_down"].values())
+    if downs:
+        linhas.append(f"polls de link em Down (atraso ate subir): {downs}")
+    if not linhas:
+        linhas.append("sem problemas detectados")
+    return linhas
 
 
 def pendencia(ciclos):
@@ -371,7 +485,8 @@ def pendencia(ciclos):
             "eta": eta, "restante_s": restante_s}
 
 
-def relatorio(caminho, ciclos, csv_path=None, html_path=None):
+def relatorio(caminho, ciclos, csv_path=None, html_path=None, just=None, mostrar_tudo=False):
+    just = just or {}
     print(f"Arquivo : {caminho}")
     if not ciclos:
         print("Nenhum ciclo encontrado no log.")
@@ -382,14 +497,17 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
     aval = [(c, *avaliar(c)) for c in ciclos]
     completos = [x for x in aval if x[0]["completo"]]
     ok = [x for x in aval if x[1]]
+    # modo testset so quando o log tem resultados do MTS (TX/RX); senao omite
+    tem_testset = any(c["tx"] is not None for c in ciclos)
 
-    cab = (f"{'ciclo':>5} {'inicio':<19} {'boot(s)':>8} {'link(s)':>8} "
-           f"{'TX testset':>14} {'FLR':>9} {'downs':>5} {'crit':>4} "
-           f"{'cpu C':>6} {'tcv C':>6} {'status':<10}")
+    cab = f"{'ciclo':>5} {'inicio':<19} {'boot(s)':>8} {'link(s)':>8} "
+    if tem_testset:
+        cab += f"{'TX testset':>14} {'FLR':>9} "
+    cab += f"{'downs':>5} {'crit':>4} {'cpu C':>6} {'tcv C':>6} {'status':<11} {'causa raiz':<16}"
     print(cab)
     print("-" * len(cab))
     linhas_csv = []
-    for c, c_ok, falhas, perda in aval:
+    for c, c_ok, falhas, perda, causa in aval:
         boot = f"{c['boot_s']:.0f}" if c["boot_s"] is not None else "-"
         linkup = f"{c['linkup_s']:.0f}" if c["linkup_s"] is not None else "-"
         tx = f"{c['tx']:,}" if c["tx"] is not None else "-"
@@ -401,12 +519,11 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
             perda_s = f"{perda / 100:.1e}"
         downs = sum(c["link_down"].values())
         crit = c["criticos"] if c["criticos"] is not None else "-"
-        if not c["completo"]:
-            status = "INCOMPLETO"
-        elif c_ok:
-            status = "OK"
-        else:
-            status = "FALHA"
+        status = status_ciclo(c, c_ok, just)
+        # ciclo justificado nao mostra causa raiz (o problema foi explicado)
+        if status in ("JUSTIFICADO", "OK", "INCOMPLETO"):
+            causa = []
+        causa_s = ",".join(causa) if causa else "-"
         sens_fim = c["envs"][-1] if c["envs"] else []
         temp_cpu = next((t for n, t, _ in sens_fim if n == "CPU Core"), None)
         temp_fabric = next((t for n, t, _ in sens_fim if n == "Switch Fabric Core"), None)
@@ -416,9 +533,11 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
                             if n.startswith("TCV")), default=None)
         cpu_s = f"{temp_cpu:.1f}" if temp_cpu is not None else "-"
         tcv_s = f"{temp_max_tcv:.1f}" if temp_max_tcv is not None else "-"
-        print(f"{c['n']:>5} {c['inicio']:%Y-%m-%d %H:%M:%S} {boot:>8} {linkup:>8} "
-              f"{tx:>14} {perda_s:>9} {downs:>5} {crit!s:>4} "
-              f"{cpu_s:>6} {tcv_s:>6} {status:<10}")
+        linha = f"{c['n']:>5} {c['inicio']:%Y-%m-%d %H:%M:%S} {boot:>8} {linkup:>8} "
+        if tem_testset:
+            linha += f"{tx:>14} {perda_s:>9} "
+        linha += f"{downs:>5} {crit!s:>4} {cpu_s:>6} {tcv_s:>6} {status:<11} {causa_s:<16}"
+        print(linha)
         linhas_csv.append({
             "ciclo": c["n"], "inicio": c["inicio"], "boot_s": c["boot_s"],
             "linkup_s": c["linkup_s"], "tx": c["tx"], "rx": c["rx"],
@@ -426,13 +545,17 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
             "warnings": c["warnings"], "temp_cpu": temp_cpu,
             "temp_fabric": temp_fabric, "temp_max_tcv": temp_max_tcv,
             "temp_psu": temp_psu, "temp_min_tcv": temp_min_tcv, "status": status,
-            "falhas": "; ".join(falhas),
+            "causa_raiz": ",".join(causa), "falhas": "; ".join(falhas),
+            "justificativa": just.get(c["n"], ""),
         })
 
     ok_completos = [x for x in completos if x[1]]
+    justificados = [(c, falhas) for c, c_ok, falhas, _, _ in aval
+                    if c["completo"] and not c_ok and c["n"] in just]
+    n_falha = len(completos) - len(ok_completos) - len(justificados)
     print()
     print(f"RESUMO: {len(completos)} ciclos completos, {len(ok_completos)} OK, "
-          f"{len(completos) - len(ok_completos)} com falha"
+          f"{len(justificados)} justificado(s), {n_falha} com falha"
           + (f" (+{len(aval) - len(completos)} incompleto)" if len(aval) != len(completos) else ""))
 
     # ----- ciclos pendentes e estimativa de conclusao -----
@@ -449,9 +572,25 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
         print(f"PENDENTES: {pend['pendentes']} de {pend['total']} ciclos "
               f"(sem ciclos suficientes para estimar o tempo medio)")
 
-    # detalhe das falhas (apenas ciclos completos; incompleto ja aparece na tabela)
-    com_falha = [(c, falhas) for c, c_ok, falhas, _ in aval if c["completo"] and not c_ok]
-    if com_falha:
+    # detalhe das falhas (apenas ciclos completos e sem justificativa)
+    com_falha = [(c, falhas) for c, c_ok, falhas, _, _ in aval
+                 if c["completo"] and not c_ok and c["n"] not in just]
+
+    if mostrar_tudo:
+        # --all: detalhe de TODOS os ciclos (falhas + observacoes por ciclo)
+        print()
+        print("=" * 70)
+        print("DETALHE DE TODOS OS CICLOS")
+        print("=" * 70)
+        for c, c_ok, falhas, _, _ in aval:
+            st = status_ciclo(c, c_ok, just)
+            print(f"\nCiclo {c['n']} ({c['inicio']:%Y-%m-%d %H:%M:%S}) [{st}]:")
+            if not c["completo"]:
+                print("  - ciclo incompleto (em andamento ou interrompido)")
+                continue
+            for fdesc in detalhe_ciclo(c, falhas, just):
+                print(f"  - {fdesc}")
+    elif com_falha:
         print()
         print("=" * 70)
         print("DETALHE DAS FALHAS")
@@ -466,6 +605,18 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
                 for iface, n in piores:
                     print(f"      {iface}: {n}x")
 
+    if justificados and not mostrar_tudo:
+        print()
+        print("=" * 70)
+        print("CICLOS JUSTIFICADOS")
+        print("=" * 70)
+        for c, falhas in justificados:
+            print(f"\nCiclo {c['n']} ({c['inicio']:%Y-%m-%d %H:%M:%S}):")
+            print(f"  JUSTIFICATIVA: {just[c['n']]}")
+            print("  Falhas detectadas:")
+            for fdesc in falhas:
+                print(f"  - {fdesc}")
+
     # alarmes observados
     vistos = {}
     for c, *_ in aval:
@@ -476,8 +627,8 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
         print()
         print("ALARMES ATIVOS OBSERVADOS:")
         for nome, fontes in sorted(vistos.items()):
-            just = ALARMES_ESPERADOS.get(nome)
-            tag = f"esperado ({just})" if just else "*** INESPERADO ***"
+            justif_alarme = ALARMES_ESPERADOS.get(nome)
+            tag = f"esperado ({justif_alarme})" if justif_alarme else "*** INESPERADO ***"
             print(f"  {nome} [{', '.join(sorted(fontes))}] -> {tag}")
 
     if csv_path:
@@ -489,7 +640,7 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
 
     if html_path:
         gerar_html(html_path, caminho, linhas_csv, com_falha, vistos, pend,
-                   len(completos), len(ok_completos))
+                   len(completos), len(ok_completos), justificados, just, tem_testset)
         print(f"Relatorio HTML salvo em: {html_path}")
 
     return 1 if com_falha else 0
@@ -499,8 +650,10 @@ def relatorio(caminho, ciclos, csv_path=None, html_path=None):
 # Relatorio HTML (autocontido, com graficos SVG; suporta tema claro/escuro)
 # ============================================================================
 
-def _svg_linhas(series, unidade, w=880, h=250):
-    """Grafico de linhas: series = [(nome, [(ciclo, valor), ...]), ...]."""
+def _svg_linhas(series, unidade, w=880, h=250, marcos=None):
+    """Grafico de linhas: series = [(nome, [(ciclo, valor), ...]), ...].
+    marcos = lista de x (ciclos) a destacar com linha vertical (falhas)."""
+    marcos = marcos or []
     series = [(nome, [(x, y) for x, y in pts if y is not None]) for nome, pts in series]
     series = [s for s in series if s[1]]
     pontos = [(x, y) for _, pts in series for x, y in pts]
@@ -530,6 +683,15 @@ def _svg_linhas(series, unidade, w=880, h=250):
     for x in xs[::passo]:
         p.append(f'<text x="{fx(x):.1f}" y="{h - 8}" class="tick" text-anchor="middle">{x}</text>')
     p.append(f'<text x="{ml}" y="{mt}" class="tick">{unidade}</text>')
+
+    # marcos de falha nao justificada: linha vertical vermelha tracejada
+    for mx in marcos:
+        if xmin <= mx <= xmax:
+            xx = fx(mx)
+            p.append(f'<line x1="{xx:.1f}" y1="{mt}" x2="{xx:.1f}" y2="{fy(ymin):.1f}" '
+                     f'class="falha-mark"/>')
+            p.append(f'<text x="{xx:.1f}" y="{mt + 8:.1f}" class="falha-lbl" '
+                     f'text-anchor="middle">{mx}</text>')
 
     for si, (nome, pts) in enumerate(series, 1):
         linha = " ".join(f"{fx(x):.1f},{fy(y):.1f}" for x, y in pts)
@@ -577,6 +739,8 @@ svg { width:100%; height:auto; display:block; }
 .axis { stroke:var(--axis); stroke-width:1; }
 .tick { fill:var(--muted); font-size:11px; }
 .lbl  { fill:var(--ink2); font-size:11px; }
+.falha-mark { stroke:var(--crit); stroke-width:1.5; stroke-dasharray:4 3; }
+.falha-lbl { fill:var(--crit); font-size:10px; font-weight:600; }
 .line { fill:none; stroke-width:2; }
 .line.s1{stroke:var(--s1)} .line.s2{stroke:var(--s2)}
 .line.s3{stroke:var(--s3)} .line.s4{stroke:var(--s4)} .line.s5{stroke:var(--s5)}
@@ -591,20 +755,82 @@ th, td { padding:5px 10px; text-align:right; border-bottom:1px solid var(--grid)
 th { color:var(--ink2); font-weight:600; font-size:12px; }
 td:first-child, th:first-child { text-align:left; }
 .st-ok { color:var(--good); font-weight:600; }
+.st-just { color:var(--good); font-weight:600; }
 .st-falha { color:var(--crit); font-weight:600; }
+.just-txt { color:var(--good); }
+.copy-btn { float:right; margin:0 0 8px 8px; font:12px system-ui; padding:3px 12px;
+  border-radius:6px; border:1px solid var(--border); background:var(--page);
+  color:var(--ink2); cursor:pointer; }
+.copy-btn:hover { color:var(--ink); border-color:var(--ink2); }
 ul { margin:6px 0; }
 """
 
 
+# Botao "copiar" em cada tabela: copia em text/html (cola formatado no
+# Yodiz/Word/Outlook) e text/plain tabulado (cola em Excel/editor de texto).
+_JS = """<script>
+document.querySelectorAll('table').forEach(function (tab) {
+  var btn = document.createElement('button');
+  btn.textContent = 'copiar';
+  btn.className = 'copy-btn';
+  btn.title = 'Copia a tabela (formatada + texto tabulado)';
+  tab.parentNode.insertBefore(btn, tab);
+  btn.addEventListener('click', function () {
+    var tsv = Array.from(tab.rows).map(function (r) {
+      return Array.from(r.cells).map(function (c) {
+        return c.innerText.trim();
+      }).join('\\t');
+    }).join('\\n');
+    // cor de fundo por status (estilo inline, para colar colorido no Yodiz)
+    var STATUS_COR = {'OK':'#2ecc71','JUSTIFICADO':'#2ecc71',
+                      'FALHA':'#e74c3c','INCOMPLETO':'#f1c40f'};
+    var html = '<table border="1" cellpadding="4" cellspacing="0"><tbody>';
+    Array.from(tab.rows).forEach(function (r) {
+      html += '<tr>';
+      Array.from(r.cells).forEach(function (c) {
+        var tag = c.tagName.toLowerCase();       // th ou td
+        var txt = c.innerText.trim();
+        var cor = STATUS_COR[txt];
+        if (tag === 'td' && cor) {
+          html += '<td><span style="background-color:' + cor + '">' + txt + '</span></td>';
+        } else {
+          html += '<' + tag + '>' + txt + '</' + tag + '>';
+        }
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    function feito() {
+      btn.textContent = 'copiado!';
+      setTimeout(function () { btn.textContent = 'copiar'; }, 1500);
+    }
+    function soTexto() { navigator.clipboard.writeText(tsv).then(feito); }
+    if (navigator.clipboard && window.ClipboardItem) {
+      navigator.clipboard.write([new ClipboardItem({
+        'text/plain': new Blob([tsv], {type: 'text/plain'}),
+        'text/html': new Blob([html], {type: 'text/html'})
+      })]).then(feito, soTexto);
+    } else if (navigator.clipboard) {
+      soTexto();
+    }
+  });
+});
+</script>"""
+
+
 def gerar_html(html_path, caminho_log, linhas, com_falha, alarmes_vistos, pend,
-               n_completos, n_ok):
+               n_completos, n_ok, justificados=None, just=None, tem_testset=True):
+    justificados = justificados or []
+    just = just or {}
+    # ciclos com falha NAO justificada -> marcados no grafico de temperatura
+    marcos_falha = [r["ciclo"] for r in linhas if r["status"] == "FALHA"]
     temp = _svg_linhas(
         [("CPU", [(r["ciclo"], r["temp_cpu"]) for r in linhas]),
          ("Switch Fabric", [(r["ciclo"], r["temp_fabric"]) for r in linhas]),
          ("TCV max", [(r["ciclo"], r["temp_max_tcv"]) for r in linhas]),
          ("PSU max", [(r["ciclo"], r["temp_psu"]) for r in linhas]),
          ("TCV min (inicio)", [(r["ciclo"], r.get("temp_min_tcv")) for r in linhas])],
-        "°C")
+        "°C", marcos=marcos_falha)
     tempos = _svg_linhas(
         [("Boot", [(r["ciclo"], r["boot_s"]) for r in linhas]),
          ("Link up", [(r["ciclo"], r["linkup_s"]) for r in linhas])],
@@ -614,8 +840,10 @@ def gerar_html(html_path, caminho_log, linhas, com_falha, alarmes_vistos, pend,
         (f"{n_ok} / {n_completos}", "ciclos OK / completos"),
         (str(len(com_falha)), "ciclos com falha"),
     ]
+    if justificados:
+        tiles.insert(2, (str(len(justificados)), "ciclos justificados"))
     perdas = [r["perda_pct"] for r in linhas if r["perda_pct"] is not None]
-    if perdas:
+    if tem_testset and perdas:
         pior = max(perdas)
         pior_s = "0" if pior == 0 else f"{pior / 100:.1e}"
         tiles.append((pior_s, "FLR maxima (testset)"))
@@ -637,24 +865,28 @@ def gerar_html(html_path, caminho_log, linhas, com_falha, alarmes_vistos, pend,
 
     linhas_tab = []
     for r in linhas:
-        cls = "st-ok" if r["status"] == "OK" else ("st-falha" if r["status"] == "FALHA" else "muted")
+        cls = {"OK": "st-ok", "JUSTIFICADO": "st-just",
+               "FALHA": "st-falha"}.get(r["status"], "muted")
         if r["perda_pct"] is None:
             flr_s = "-"
         elif r["perda_pct"] == 0:
             flr_s = "0"
         else:
             flr_s = f"{r['perda_pct'] / 100:.1e}"
+        causa_s = r.get("causa_raiz") or "-"
+        cel_testset = (f"<td>{fmt(r['tx'])}</td><td>{fmt(r['rx'])}</td><td>{flr_s}</td>"
+                       if tem_testset else "")
         linhas_tab.append(
             f"<tr><td>{r['ciclo']}</td><td>{r['inicio']:%d/%m %H:%M:%S}</td>"
             f"<td>{fmt(r['boot_s'])}</td><td>{fmt(r['linkup_s'])}</td>"
-            f"<td>{fmt(r['tx'])}</td><td>{fmt(r['rx'])}</td>"
-            f"<td>{flr_s}</td><td>{fmt(r['temp_cpu'], 1)}</td>"
+            f"{cel_testset}<td>{fmt(r['temp_cpu'], 1)}</td>"
             f"<td>{fmt(r['temp_max_tcv'], 1)}</td><td>{r['polls_down']}</td>"
-            f"<td class='{cls}'>{r['status']}</td></tr>")
+            f"<td class='{cls}'>{r['status']}</td><td>{causa_s}</td></tr>")
+    th_testset = ("<th>TX testset</th><th>RX testset</th><th>FLR</th>"
+                  if tem_testset else "")
     tabela = ("<table><tr><th>ciclo</th><th>inicio</th><th>boot (s)</th>"
-              "<th>link (s)</th><th>TX testset</th><th>RX testset</th>"
-              "<th>FLR</th><th>CPU C</th><th>TCV max C</th>"
-              "<th>polls down</th><th>status</th></tr>"
+              "<th>link (s)</th>" + th_testset + "<th>CPU C</th><th>TCV max C</th>"
+              "<th>polls down</th><th>status</th><th>causa raiz</th></tr>"
               + "".join(linhas_tab) + "</table>")
 
     falhas_html = ""
@@ -664,6 +896,17 @@ def gerar_html(html_path, caminho_log, linhas, com_falha, alarmes_vistos, pend,
             itens = "".join(f"<li>{f}</li>" for f in falhas)
             blocos.append(f"<h3>Ciclo {c['n']} ({c['inicio']:%d/%m %H:%M:%S})</h3><ul>{itens}</ul>")
         falhas_html = "<h2>Detalhe das falhas</h2><div class='card'>" + "".join(blocos) + "</div>"
+
+    just_html = ""
+    if justificados:
+        blocos = []
+        for c, falhas in justificados:
+            itens = "".join(f"<li>{f}</li>" for f in falhas)
+            blocos.append(
+                f"<h3>Ciclo {c['n']} ({c['inicio']:%d/%m %H:%M:%S})</h3>"
+                f"<p class='just-txt'><b>Justificativa:</b> {just.get(c['n'], '')}</p>"
+                f"<details><summary class='muted'>falhas detectadas</summary><ul>{itens}</ul></details>")
+        just_html = "<h2>Ciclos justificados</h2><div class='card'>" + "".join(blocos) + "</div>"
 
     alarmes_html = ""
     if alarmes_vistos:
@@ -687,40 +930,103 @@ def gerar_html(html_path, caminho_log, linhas, com_falha, alarmes_vistos, pend,
 <h2>Tempo de boot e link up por ciclo</h2><div class="card">{tempos}</div>
 <h2>Resumo por ciclo</h2><div class="card">{tabela}</div>
 {falhas_html}
+{just_html}
 {alarmes_html}
+{_JS}
 </body></html>"""
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(doc)
 
 
-def main():
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except AttributeError:
-        pass
-    ap = argparse.ArgumentParser()
-    ap.add_argument("log", help="arquivo de log do ciclosDMOS.ttl")
-    ap.add_argument("--csv", default=None, help="salvar resumo por ciclo em CSV")
-    ap.add_argument("--html", default=None,
-                    help="caminho do relatorio HTML (default: <log>.html)")
-    ap.add_argument("--nao-abrir", action="store_true",
-                    help="nao abrir o HTML no navegador ao final")
-    args = ap.parse_args()
+def carregar_justificativas(log_path):
+    """Le o JSON <log>_justificativas.json (chave = numero do ciclo)."""
+    just_path = os.path.splitext(log_path)[0] + "_justificativas.json"
+    just = {}
+    if os.path.exists(just_path):
+        try:
+            with open(just_path, encoding="utf-8-sig") as f:
+                texto = f.read()
+            # tolera virgula sobrando antes de } ou ] (erro comum de edicao manual)
+            texto = re.sub(r",\s*([}\]])", r"\1", texto)
+            just = {int(k): str(v) for k, v in json.loads(texto).items()}
+            print(f"Justificativas: {just_path} ({len(just)} ciclo(s))")
+        except (ValueError, OSError) as e:
+            print("*" * 70)
+            print("AVISO: arquivo de justificativas INVALIDO e foi IGNORADO!")
+            print(f"  {just_path}")
+            print(f"  Erro: {e}")
+            print("*" * 70)
+    return just
 
-    html_path = args.html or (os.path.splitext(args.log)[0] + ".html")
 
+def processar_log(log_path, csv_path, html_path, abrir, mostrar_tudo=False):
+    just = carregar_justificativas(log_path)
     try:
-        ciclos = analisar(args.log)
+        ciclos = analisar(log_path)
     except OSError as e:
-        sys.exit(f"ERRO abrindo o log: {e}")
-    rc = relatorio(args.log, ciclos, args.csv, html_path)
-    if not args.nao_abrir and os.path.exists(html_path):
+        print(f"ERRO abrindo o log: {e}")
+        return 2
+    rc = relatorio(log_path, ciclos, csv_path, html_path, just, mostrar_tudo)
+    if abrir and os.path.exists(html_path):
         try:
             os.startfile(html_path)          # Windows: abre no navegador padrao
         except (AttributeError, OSError):
             import webbrowser
             webbrowser.open(f"file:///{os.path.abspath(html_path)}")
-    sys.exit(rc)
+    return rc
+
+
+def main():
+    global TOL_TRANSITO
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+    ap = argparse.ArgumentParser()
+    ap.add_argument("logs", nargs="*",
+                    help="log(s) do ciclosDMOS.ttl; se vazio, analisa todos os "
+                         "rebootVHW_*.log da pasta atual")
+    ap.add_argument("--csv", default=None, help="salvar resumo em CSV (so com 1 log)")
+    ap.add_argument("--html", default=None,
+                    help="caminho do HTML (so com 1 log; default <log>.html)")
+    ap.add_argument("--nao-abrir", action="store_true",
+                    help="nao abrir o HTML no navegador ao final")
+    ap.add_argument("--all", action="store_true", dest="mostrar_tudo",
+                    help="imprime o detalhe de TODOS os ciclos (nao so os com falha)")
+    ap.add_argument("--tol", type=int, default=TOL_TRANSITO,
+                    help=f"tolerancia (pacotes) p/ In!=Out no modo conservador; "
+                         f"absorve trafego em transito (default {TOL_TRANSITO})")
+    args = ap.parse_args()
+    TOL_TRANSITO = args.tol
+
+    logs = args.logs
+    if not logs:
+        import glob
+        logs = sorted(glob.glob("rebootVHW_*.log"))
+        if not logs:
+            sys.exit("Nenhum log informado e nenhum 'rebootVHW_*.log' na pasta atual.")
+        print(f"Analisando {len(logs)} log(s) da pasta atual.\n")
+
+    # um unico log: respeita --html/--csv e abre no navegador (salvo --nao-abrir)
+    if len(logs) == 1:
+        log = logs[0]
+        html_path = args.html or (os.path.splitext(log)[0] + ".html")
+        sys.exit(processar_log(log, args.csv, html_path, not args.nao_abrir,
+                               args.mostrar_tudo))
+
+    # lote: HTML default ao lado de cada log; nao abre (evita N abas no navegador)
+    pior_rc = 0
+    for log in logs:
+        print("=" * 80)
+        print(f"# {os.path.basename(log)}")
+        print("=" * 80)
+        html_path = os.path.splitext(log)[0] + ".html"
+        pior_rc = max(pior_rc, processar_log(log, None, html_path, False,
+                                             args.mostrar_tudo))
+        print()
+    print(f"{len(logs)} log(s) analisados. HTML gerado ao lado de cada .log "
+          "(nao aberto automaticamente no modo lote).")
+    sys.exit(pior_rc)
 
 
 if __name__ == "__main__":
