@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime
 
 import matplotlib
@@ -103,6 +104,42 @@ def load_setpoint(path):
     return pts
 
 
+def read_series(db, groups):
+    """Le o SQLite e retorna (fan_series, temp_series) como dicts label->(xs, ys),
+    ja com a abreviacao dos transceivers e a regra dos sensores de plataforma.
+
+    Sensores de plataforma (CPU Core, PSU..., Switch Fabric Core) SEMPRE entram no
+    grupo de temperatura; as leituras 'TCV ...' do environment so entram se
+    'temperature_sensor' estiver em groups. Abre conexao propria com timeout, para
+    tolerar o coletor gravando ao mesmo tempo (modo ao vivo)."""
+    need_fan = "fan" in groups
+    need_temp = ("transceiver" in groups) or ("temperature_sensor" in groups)
+    con = sqlite3.connect(db, timeout=5.0)
+    try:
+        cur = con.cursor()
+        tcv = fetch(cur, "transceiver", "transceiver_id", "temperature", to_float) \
+            if "transceiver" in groups else {}
+        all_sensor = fetch(cur, "temperature_sensor", "sensor_name", "temperature", to_float) \
+            if need_temp else {}
+        fan = fetch(cur, "fan", "fan_id", "speed", to_float) if need_fan else {}
+    finally:
+        con.close()
+
+    is_tcv_env = re.compile(r"^TCV \d+G \d+/\d+/\d+$")
+    sensor = {n: xy for n, xy in all_sensor.items() if not is_tcv_env.match(n)}
+    if "temperature_sensor" in groups:
+        for n, xy in all_sensor.items():
+            if is_tcv_env.match(n):
+                sensor[n] = xy
+
+    temp_series = {}
+    for tid, xy in tcv.items():
+        temp_series[abbrev_tcv(tid)] = xy
+    for n, xy in sensor.items():
+        temp_series[n] = xy
+    return dict(fan), temp_series
+
+
 def main():
     ap = argparse.ArgumentParser(description="Plot termico 2-subplots (prototipo)")
     ap.add_argument("-p", "--path", required=True,
@@ -115,6 +152,10 @@ def main():
                     choices=["fan", "transceiver", "temperature_sensor"],
                     help="Grupos a plotar (default: todos). Ex: --plot fan temperature_sensor")
     ap.add_argument("--save", help="Salva a figura no PNG informado (headless) em vez de exibir")
+    ap.add_argument("--live", action="store_true",
+                    help="Atualiza o grafico ao vivo, relendo o banco enquanto a coleta acontece")
+    ap.add_argument("--interval", type=float, default=10.0,
+                    help="Intervalo (s) entre atualizacoes no modo --live (default: 10)")
     args = ap.parse_args()
 
     groups = args.plot if args.plot else ["fan", "transceiver", "temperature_sensor"]
@@ -139,23 +180,37 @@ def main():
     if args.save:
         matplotlib.use("Agg")
 
-    cur = sqlite3.connect(db).cursor()
-    tcv = fetch(cur, "transceiver", "transceiver_id", "temperature", to_float) \
-        if "transceiver" in groups else {}
-    # a tabela temperature_sensor mistura sensores de plataforma (CPU Core, PSU...,
-    # sem equivalente em transceiver) com leituras "TCV ..." que sao a contraparte
-    # do environment para os mesmos modulos do transceiver. So as segundas dependem
-    # do grupo "temperature_sensor"; as de plataforma aparecem sempre que ha subplot
-    # de temperatura, independente do --plot escolhido.
-    all_sensor = fetch(cur, "temperature_sensor", "sensor_name", "temperature", to_float) \
-        if need_temp else {}
-    is_tcv_env = re.compile(r"^TCV \d+G \d+/\d+/\d+$")
-    platform_sensor = {n: xy for n, xy in all_sensor.items() if not is_tcv_env.match(n)}
-    tcv_env_sensor = {n: xy for n, xy in all_sensor.items() if is_tcv_env.match(n)}
-    sensor = dict(platform_sensor)
-    if "temperature_sensor" in groups:
-        sensor.update(tcv_env_sensor)
-    fan = fetch(cur, "fan", "fan_id", "speed", to_float) if need_fan else {}
+    if args.save:
+        matplotlib.use("Agg")
+
+    pts = load_setpoint(setpoint_path) if setpoint_path else []
+
+    def any_points(*dicts):
+        return any(xy[0] for d in dicts for xy in d.values())
+
+    def safe_read():
+        if not os.path.isfile(db):
+            return {}, {}
+        try:
+            return read_series(db, groups)
+        except sqlite3.Error as e:
+            print("Aviso ao ler o banco:", e)
+            return {}, {}
+
+    # Leitura inicial. No modo ao vivo, espera ate haver algum dado (o usuario pode
+    # abrir o grafico antes de a coleta comecar a gravar).
+    fan_series, temp_series = safe_read()
+    if args.live:
+        while not any_points(fan_series, temp_series):
+            print("Aguardando dados da coleta em", db, "...")
+            time.sleep(args.interval)
+            fan_series, temp_series = safe_read()
+
+    def current_xmax(fs, ts):
+        xs = [max(xy[0]) for d in (fs, ts) for xy in d.values() if xy[0]]
+        if xs:
+            return max(xs)
+        return pts[-1][0] if pts else None
 
     # Cria os subplots conforme os grupos escolhidos (FAN em cima, temperatura embaixo)
     ax_f = ax_t = None
@@ -169,50 +224,45 @@ def main():
         fig, ax_f = plt.subplots(figsize=(15, 6))
     fig.suptitle("{} - Ensaio termico".format(model), fontsize=13, fontweight="bold")
 
-    pts = load_setpoint(setpoint_path) if setpoint_path else []
-    all_series = list(tcv.values()) + list(sensor.values()) + list(fan.values())
-    xmax = max((max(v[0]) for v in all_series if v[0]),
-               default=(pts[-1][0] if pts else None))
-
     colors = color_cycle()
     ci = 0
-    temp_lines = []   # linhas do subplot de temperatura (para os checkboxes)
+    temp_lines = []   # linhas do subplot de temperatura (para os checkboxes, na ordem)
     fan_lines = []    # linhas do subplot de fan
+    fan_map = {}      # label -> Line2D (para atualizar ao vivo sem recriar)
+    temp_map = {}
 
     # --- Fans (RPM real) - subplot superior (ordem alfabetica/natural) ---
     if ax_f is not None:
-        for fid in sorted(fan, key=natural_key):
-            x, y = fan[fid]
+        for fid in sorted(fan_series, key=natural_key):
+            x, y = fan_series[fid]
             ln, = ax_f.plot(x, y, label=fid, color=colors[ci % len(colors)], lw=1.0)
             fan_lines.append(ln)
+            fan_map[fid] = ln
             ci += 1
         ax_f.set_ylabel("Fan (RPM)")
         ax_f.grid(True, which="both", ls="-", lw=0.4, alpha=0.25)
 
-    # --- Temperaturas - subplot inferior (transceiver + sensor mesclados, ordem alfabetica/natural) ---
+    # --- Temperaturas - subplot inferior (ordem alfabetica/natural) ---
     if ax_t is not None:
-        temp_series = {}
-        for tid, xy in tcv.items():
-            temp_series[abbrev_tcv(tid)] = xy
-        for name, xy in sensor.items():
-            temp_series[name] = xy
         for label in sorted(temp_series, key=natural_key):
             x, y = temp_series[label]
             ln, = ax_t.plot(x, y, label=label, color=colors[ci % len(colors)], lw=1.0)
             temp_lines.append(ln)
+            temp_map[label] = ln
             ci += 1
 
     # --- Setpoint da camara ---
+    sp_line = None
     if pts:
         # step (degrau em C) no subplot de temperatura, quando existir
         if ax_t is not None:
+            xmax = current_xmax(fan_series, temp_series)
             xs = [p[0] for p in pts] + [xmax]
             ys = [p[1] for p in pts] + [pts[-1][1]]
-            ln, = ax_t.plot(xs, ys, color="black", lw=2.0, ls="--",
-                            label="Setpoint camara", zorder=10)
-            temp_lines.append(ln)
-        # linhas verticais + anotacao, so quando o setpoint MUDA de valor
-        # (evita verticais duplicadas e rotulos sobrepostos nos patamares)
+            sp_line, = ax_t.plot(xs, ys, color="black", lw=2.0, ls="--",
+                                 label="Setpoint camara", zorder=10)
+            temp_lines.append(sp_line)
+        # linhas verticais + anotacao (estaticas), so quando o setpoint MUDA de valor
         prev_v = None
         for t, v in pts:
             if v == prev_v:
@@ -268,9 +318,43 @@ def main():
     make_panel(ax_t, temp_lines, 6)
     make_panel(ax_f, fan_lines, 8)
 
+    def refresh():
+        """Rele o banco e atualiza os dados das linhas existentes (sem recriar a
+        figura, preservando checkboxes/zoom). Reescala os eixos para o novo range."""
+        fs, ts = safe_read()
+        for label, ln in fan_map.items():
+            if fs.get(label) and fs[label][0]:
+                ln.set_data(fs[label][0], fs[label][1])
+        for label, ln in temp_map.items():
+            if ts.get(label) and ts[label][0]:
+                ln.set_data(ts[label][0], ts[label][1])
+        if sp_line is not None:
+            xmax = current_xmax(fs, ts)
+            if xmax is not None:
+                sp_line.set_data([p[0] for p in pts] + [xmax],
+                                 [p[1] for p in pts] + [pts[-1][1]])
+        for ax in (ax_f, ax_t):
+            if ax is not None:
+                ax.relim()
+                ax.autoscale_view()
+        fig.canvas.draw_idle()
+
     if args.save:
+        if args.live:            # exercita o caminho de atualizacao (para teste headless)
+            refresh()
+            refresh()
         fig.savefig(args.save, dpi=110)
         print("Figura salva em", args.save)
+    elif args.live:
+        print("Modo ao vivo: atualizando a cada {}s. Feche a janela para sair.".format(args.interval))
+        plt.ion()
+        plt.show(block=False)
+        try:
+            while plt.fignum_exists(fig.number):
+                refresh()
+                plt.pause(args.interval)
+        except KeyboardInterrupt:
+            print("\nEncerrado.")
     else:
         plt.show()
 

@@ -9,20 +9,22 @@ echo.
 
 :: Pergunta se limpa ou mantém alterações
 echo Deseja limpar as alterações locais e atualizar o repositório?
-echo [1] Sim - limpar tudo e fazer pull (git reset --hard + pull)
+echo [1] Sim - descartar TUDO e ficar identico ao servidor
 echo [2] Não - manter minhas alterações e seguir para compilar
 echo.
 set /p OPCAO_GIT="Escolha (1 ou 2): "
 
 if "%OPCAO_GIT%"=="1" (
     echo.
-    echo Limpando alterações e atualizando repositório...
+    echo Descartando alteracoes locais e alinhando com o servidor...
     cd /d C:\Projetos\platf-scripts-lua
     git checkout develop
-    git reset --hard
-    git pull
+    git fetch origin
+    git reset --hard origin/develop
+    git clean -fd
     echo.
     echo Repositório atualizado!
+    git log --oneline -1
 ) else if "%OPCAO_GIT%"=="2" (
     echo.
     echo Mantendo alterações locais...
@@ -66,7 +68,7 @@ echo.
 
 ::ssh humberto.kramm@172.26.27.37 "bash -l -c 'lua ~/makelua.lua %PROJETO%'"
 
-python C:\Projetos\platf-scripts-lua\.claude\scripts\lua_tar_gen.py -p %PROJETO%
+python C:\Projetos\platf-scripts-lua\util\other\lua_tar_gen.py -p %PROJETO%
 
 echo.
 echo Organizando arquivos gerados...

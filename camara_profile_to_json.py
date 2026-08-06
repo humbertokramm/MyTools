@@ -85,13 +85,20 @@ def main():
     steps = parse_steps(args.input)
     start_dt = datetime.strptime(args.start, SP_FMT)
 
-    last = steps[-1]
-    body = steps[:-1] if last["jump_count"] > 0 else steps
-    all_steps = body * max(1, args.loops)
-    if last["jump_count"] == 0:
-        pass  # last ja incluido em 'steps' sem loop
+    # Um step com jump_count>0 fecha o loop: ao terminar, o controlador salta de volta
+    # para o step 'jump_step' (1-based) e repete. O ciclo vai, entao, do alvo do salto
+    # ate o proprio step do loop (inclusive - ele tem duracao real e faz parte do ciclo).
+    # Steps antes do alvo (se houver) sao um preambulo executado uma unica vez.
+    loop_idx = next((i for i, s in enumerate(steps) if s["jump_count"] > 0), None)
+    if loop_idx is not None:
+        target = max(0, min(steps[loop_idx]["jump_step"] - 1, loop_idx))
+        preamble = steps[:target]
+        cycle = steps[target:loop_idx + 1]
+        all_steps = preamble + cycle * max(1, args.loops)
+    else:
+        all_steps = steps  # sem loop declarado no profile
 
-    points = steps_to_points(all_steps if last["jump_count"] > 0 else steps, start_dt)
+    points = steps_to_points(all_steps, start_dt)
 
     out_abs = os.path.abspath(args.output)
     out_dir = os.path.dirname(out_abs)
@@ -103,8 +110,12 @@ def main():
 
     with open(out_abs, "w", encoding="utf-8") as f:
         json.dump(points, f, ensure_ascii=False, indent=2)
-    print("Steps lidos:", len(steps), "| loop final: jump_step={} jump_count={}".format(
-        last["jump_step"], last["jump_count"]))
+    if loop_idx is not None:
+        cyc = steps[max(0, min(steps[loop_idx]["jump_step"] - 1, loop_idx)):loop_idx + 1]
+        print("Steps lidos: {} | ciclo = {} steps (idx {}..{}) x {} loop(s)".format(
+            len(steps), len(cyc), max(0, steps[loop_idx]["jump_step"] - 1), loop_idx, max(1, args.loops)))
+    else:
+        print("Steps lidos:", len(steps), "| sem loop declarado")
     print("JSON escrito em", out_abs, "com", len(points), "pontos")
 
 
