@@ -10,6 +10,10 @@ from intranetVersionChecker import check_update, update_local, check_fpga_update
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "http_server_config.json")
 
+TFTP_DIR        = r"C:\Testes\TFTP"
+TFTP_LP_RBF     = os.path.join(TFTP_DIR, "LP.rbf")
+INSTALL_LUA_BAT = os.path.join(TFTP_DIR, "install Lua.bat")
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -211,14 +215,41 @@ def start_gui(IP, PORT):
         def task():
             sucesso = update_fpga_local(projeto)
             if sucesso:
-                status_fpga.config(text="FPGA atualizado", fg="green")
+                status_fpga.config(text="FPGA atualizado | LP.rbf → TFTP", fg="green")
                 atualizar_lista()
             else:
                 status_fpga.config(text="Erro no download FPGA", fg="red")
         threading.Thread(target=task, daemon=True).start()
 
+    def macro_install_lp():
+        """Dispara o 'install Lua.bat' do TFTP (abre Tftpd64 + macro TeraTerm)."""
+        if not os.path.exists(TFTP_LP_RBF):
+            status_fpga.config(text="LP.rbf nao encontrado no TFTP", fg="red")
+            return
+        if not os.path.exists(INSTALL_LUA_BAT):
+            status_fpga.config(text="install Lua.bat nao encontrado", fg="red")
+            return
+        try:
+            # CREATE_NO_WINDOW: o bat roda oculto (sem console piscando).
+            # O Tftpd64 e o TeraTerm sao lancados por 'start' dentro do bat,
+            # entao abrem normalmente como janelas proprias.
+            subprocess.Popen(
+                ["cmd", "/c", INSTALL_LUA_BAT],
+                cwd=os.path.dirname(INSTALL_LUA_BAT),
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            status_fpga.config(text="Macro Install LP disparada", fg="green")
+        except Exception as e:
+            status_fpga.config(text=f"Erro ao disparar macro: {e}", fg="red")
+
     tk.Button(frame, text="Verificar FPGA", command=verificar_fpga).pack(pady=2)
-    tk.Button(frame, text="Atualizar FPGA", command=atualizar_fpga).pack(pady=2)
+
+    linha_btn_fpga = tk.Frame(frame)
+    linha_btn_fpga.pack(pady=2)
+    tk.Button(linha_btn_fpga, text="Atualizar FPGA",
+              command=atualizar_fpga).pack(side="left", padx=2)
+    tk.Button(linha_btn_fpga, text="Macro Install LP",
+              command=macro_install_lp).pack(side="left", padx=2)
 
     # ---------------- separador ----------------
     tk.Frame(frame, height=1, bg="gray").pack(fill="x", pady=8)

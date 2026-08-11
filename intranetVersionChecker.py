@@ -83,6 +83,44 @@ def check_fpga_update(projeto, path="."):
     return "UPDATE", nome_rbf
 
 
+TFTP_DIR = r"C:\Testes\TFTP"
+
+
+def _set_tftp_rbf(nome_rbf, path=".", tftp_dir=TFTP_DIR):
+    """Copia o .rbf para <tftp_dir>\\LP.rbf e appenda em version_info.txt.
+
+    Analogo ao _set_latest_bin, porem para a imagem de FPGA enviada por TFTP
+    (o "install Lua.bat" da pasta TFTP espera o nome fixo LP.rbf).
+    """
+    src = os.path.join(path, nome_rbf)
+    dst = os.path.join(tftp_dir, "LP.rbf")
+
+    try:
+        os.makedirs(tftp_dir, exist_ok=True)
+
+        if os.path.exists(dst):
+            os.remove(dst)
+
+        shutil.copy2(src, dst)
+
+        stat = os.stat(src)
+        size_mb = stat.st_size / (1024 * 1024)
+        criado = datetime.fromtimestamp(stat.st_ctime).strftime("%Y-%m-%d %H:%M:%S")
+        agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        log_path = os.path.join(path, "version_info.txt")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{agora}] {nome_rbf} | {size_mb:.1f} MB | criado: {criado} "
+                    f"| -> {dst}\n")
+
+        print("LP.rbf (TFTP) <-", nome_rbf)
+        return True
+
+    except Exception as e:
+        print("Erro ao copiar para TFTP:", e)
+        return False
+
+
 # -------------------------------
 # FPGA — baixar e limpar antigos
 # -------------------------------
@@ -107,6 +145,7 @@ def update_fpga_local(projeto, path="."):
     # Se o .rbf final já existe, não precisa baixar de novo
     if nome_rbf in locais_rbf:
         print("FPGA já atualizado:", nome_rbf)
+        _set_tftp_rbf(nome_rbf, path)   # garante LP.rbf atualizado no TFTP
         return True
 
     # Baixa o zip
@@ -159,6 +198,7 @@ def update_fpga_local(projeto, path="."):
             except Exception as e:
                 print("Erro ao remover:", f, e)
 
+    _set_tftp_rbf(nome_rbf, path)
     return True
 
 
