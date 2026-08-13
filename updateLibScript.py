@@ -17,6 +17,7 @@ RESET = '\033[0m'
 
 
 REPOS_ = 'C:\\Projetos'
+LIBS_ = 'C:\\Testes\\MyTools'
 
 
 def parse_arguments():
@@ -27,10 +28,12 @@ def parse_arguments():
 def get_folders(arg_f):
     if arg_f:
         # Retorna todas as pastas em C:\Projetos
-        return [os.path.join(REPOS_, d) for d in os.listdir(REPOS_) if os.path.isdir(os.path.join(REPOS_, d))]
+        dirs  = [os.path.join(REPOS_, d) for d in os.listdir(REPOS_) if os.path.isdir(os.path.join(REPOS_, d))]
+        dirs.append(os.path.normpath(LIBS_))   # append muta a lista e retorna None
+        return dirs
     else:
         # Lista de pastas padrão
-        return [REPOS_+'\\standard-files\\', REPOS_+'\\scripts\\']
+        return [LIBS_]
 
 def check_folder_exists(folder):
     if not os.path.exists(folder):
