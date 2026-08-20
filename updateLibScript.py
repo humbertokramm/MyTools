@@ -17,7 +17,9 @@ RESET = '\033[0m'
 
 
 REPOS_ = 'C:\\Projetos'
-LIBS_ = 'C:\\Testes\\MyTools'
+# Lê a variável de ambiente
+LIBS_ = os.getenv("PYTHONPATH")
+print([LIBS_])
 
 
 def parse_arguments():
