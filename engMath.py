@@ -8,7 +8,7 @@ ENG_NOTATION = {
     'f':  1e-15, 'a':  1e-18, 'z':  1e-21, 'y':  1e-24,
 }
 
-SYMBOLS = ['V', 'W', 'A', 'Ω', 's', 'Hz']
+SYMBOLS = ['V', 'W', 'A', 'Ω', 's', 'Hz', 'RPM']
 
 
 def format_eng(label, suffix=False):

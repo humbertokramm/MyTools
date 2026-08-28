@@ -546,6 +546,158 @@ class CsvScope:
 					for n in dados[busca]:
 						self.annotation(n,dados,busca)
 
+	def _rising_edges(self, t, v, vih, vil, interpolate=True):
+		"""
+		Retorna os instantes das bordas de subida de um sinal digital.
+
+		Usa histerese (Schmitt): o sinal só é considerado alto acima de 'vih' e
+		só volta a baixo abaixo de 'vil'. Entre os dois limiares o estado
+		anterior é mantido, o que evita contagem dupla por ruído ou borda lenta.
+
+		Args:
+			t (np.ndarray): Vetor de tempo.
+			v (np.ndarray): Vetor de amplitude, na mesma unidade de vih/vil.
+			vih (float): Limiar de nível alto.
+			vil (float): Limiar de nível baixo.
+			interpolate (bool, optional): Interpola linearmente o cruzamento de
+				'vih' entre as duas amostras da borda. Padrão é True.
+
+		Returns:
+			np.ndarray: Instantes das bordas de subida, na unidade de 't'.
+
+		Raises:
+			ValueError: Se o sinal nunca cruzar nenhum dos limiares.
+		"""
+		t = np.asarray(t, dtype=float)
+		v = np.asarray(v, dtype=float)
+
+		state = np.full(v.size, -1, dtype=np.int8)
+		state[v >= vih] = 1
+		state[v <= vil] = 0
+
+		known = np.flatnonzero(state >= 0)
+		if known.size == 0:
+			raise ValueError(f'Sinal nunca cruza os limiares ViL={vil} / ViH={vih}')
+
+		# propaga o último estado conhecido sobre a região de histerese
+		state[:known[0]] = state[known[0]]
+		last = np.maximum.accumulate(np.where(state >= 0, np.arange(v.size), 0))
+		s = state[last]
+
+		k = np.flatnonzero((s[1:] == 1) & (s[:-1] == 0)) + 1
+		if not interpolate or k.size == 0:
+			return t[k]
+
+		dv = v[k] - v[k-1]
+		frac = np.divide(vih - v[k-1], dv, out=np.zeros(k.size), where=dv != 0)
+		return t[k-1] + np.clip(frac, 0.0, 1.0)*(t[k] - t[k-1])
+
+	def _speed_report(self, x, y, unit):
+		"""
+		Imprime a excursão de velocidade de uma série: pico, vale e queda.
+
+		O pico considerado é o maior valor que antecede o vale, de modo que a
+		queda medida seja a desaceleração e não a excursão total da captura.
+
+		Args:
+			x (np.ndarray): Tempo em segundos.
+			y (np.ndarray): Velocidade (Hz ou RPM).
+			unit (str): Unidade usada na impressão.
+
+		Returns:
+			dict: 'max', 't_max', 'min', 't_min', 'drop', 'drop_pct', 'fall_time'.
+		"""
+		iMin = int(np.argmin(y))
+		iMax = int(np.argmax(y[:iMin+1])) if iMin > 0 else int(np.argmax(y))
+		res = {
+			'max': float(y[iMax]), 't_max': float(x[iMax]),
+			'min': float(y[iMin]), 't_min': float(x[iMin]),
+			'drop': float(y[iMax]-y[iMin]),
+			'drop_pct': float(100.0*(y[iMax]-y[iMin])/y[iMax]),
+			'fall_time': float(x[iMin]-x[iMax]),
+		}
+		print(f'  pico  : {res["max"]:8.1f} {unit} @ {res["t_max"]*1e3:8.2f} ms')
+		print(f'  vale  : {res["min"]:8.1f} {unit} @ {res["t_min"]*1e3:8.2f} ms')
+		print(f'  queda : {res["drop"]:8.1f} {unit} ({res["drop_pct"]:.1f} %)'
+			f' em {res["fall_time"]*1e3:.1f} ms')
+		return res
+
+	def tach2speed(self, n, navg=16, ppr=None, vih=None, vil=None, name=None,
+				color=False, report=True, config=None):
+		"""
+		Converte um sinal de tacômetro já carregado em uma série de velocidade.
+
+		Procura em self.reads a série chamada 'n', mede o intervalo entre suas
+		bordas de subida e acrescenta uma nova série 'velocidade x tempo'. Como
+		o 'label y' da nova série é diferente do da primeira série carregada, o
+		plot() a coloca automaticamente no segundo eixo Y.
+
+		A frequência sai de uma média móvel de 'navg' períodos, com a amostra no
+		centro da janela: f = navg/(e[k+navg]-e[k]). A média é necessária porque
+		o instante de cada borda só é conhecido dentro de um período de
+		amostragem: com Ts=32us em um tacômetro de 1kHz, a medida ciclo a ciclo
+		carrega +-3% de jitter puramente numérico, que esconde a rampa mecânica
+		do fan. A média divide esse erro por navg, em troca de uma resolução
+		temporal de navg períodos.
+
+		Args:
+			n (str): Nome da série do tacômetro, já carregada por load().
+			navg (int, optional): Períodos por janela da média móvel. Padrão 16.
+				Use 1 para frequência ciclo a ciclo (bem mais ruidosa).
+			ppr (int, optional): Pulsos por revolução do fan. Se informado, a
+				saída sai em RPM em vez de Hz. Padrão None.
+			vih (float, optional): Limiar de nível alto, em volts. Padrão None,
+				que usa 'high_min' de self.Limits['logicLimits'].
+			vil (float, optional): Limiar de nível baixo, em volts. Padrão None,
+				que usa 'low_max' de self.Limits['logicLimits'].
+			name (str, optional): Nome da nova série. Padrão None, que usa
+				'<n> speed'.
+			color (str or bool, optional): Cor da nova série. Padrão False.
+			report (bool, optional): Imprime pico, vale e queda. Padrão True.
+			config (dict, optional): Configurações extras repassadas ao load(),
+				no mesmo formato. 'label x' e 'label y' já vêm preenchidos.
+
+		Returns:
+			dict or str: A série criada, igual ao retorno de load(). Devolve
+				'nan' se o nome não existir ou se houver bordas de menos.
+		"""
+		serie,_ = self._find_key(self.reads, n)
+		if serie is None:
+			print(f'ERROR tach2speed: serie "{n}" nao encontrada')
+			return 'nan'
+
+		# x e y estão na escala do gráfico: volta para as unidades de base (s,V)
+		t = np.asarray(serie['x'], dtype=float)*serie['engNoteX']
+		v = np.asarray(serie['y'], dtype=float)*serie['engNoteY']
+
+		logic = self.Limits['logicLimits'] if 'logicLimits' in self.Limits else False
+		if vih is None: vih = logic['high_min'] if logic else 0.7*np.max(v)
+		if vil is None: vil = logic['low_max']  if logic else 0.3*np.max(v)
+
+		edges = self._rising_edges(t, v, vih, vil)
+		navg = max(1, int(navg))
+		if edges.size < navg+1:
+			print(f'ERROR tach2speed: bordas insuficientes ({edges.size}) para navg={navg}')
+			return 'nan'
+
+		x = 0.5*(edges[navg:] + edges[:-navg])
+		y = navg/(edges[navg:] - edges[:-navg])
+		ly = 'Frequency[Hz]'
+		if ppr is not None:
+			y = y*60.0/float(ppr)
+			ly = 'Speed[RPM]'
+
+		if report: self._speed_report(x, y, format_eng(ly, True))
+
+		cfg = {'label x': serie['labelx'], 'label y': ly, 'loc_legend2': 'lower right'}
+		if config: cfg.update(config)
+
+		speed = self.load(x=x, y=y, color=color, config=cfg,
+						n=name if name else f'{n} speed')
+		# mantém no rodapé a informação da captura, não a da série calculada
+		if speed != 'nan': speed['data'] = serie['data']
+		return speed
+
 	def _find_key(self,list,value,key='name'):
 		for i,dictio in enumerate(list):
 			if key in dictio:
@@ -864,7 +1016,7 @@ class CsvScope:
 			self.yDf.loc[i,'xMax'] =  serie['x'].max()
 			self.yDf.loc[i,'yMin'] =  serie['y'].min()
 			self.yDf.loc[i,'yMax'] =  serie['y'].max()
-			self.yDf.loc[i,'draw'] = []
+			self.yDf.at[i,'draw'] = []
 		else:
 			if self.yDf.loc[i,'xMin'] >= serie['x'].min(): self.yDf.loc[i,'xMin'] = serie['x'].min()
 			if self.yDf.loc[i,'xMax'] <= serie['x'].max(): self.yDf.loc[i,'xMax'] = serie['x'].max()
@@ -1030,6 +1182,7 @@ class CsvScope:
 		ax.set_title(t)
 		self._plot_notes(fig,ax,0)
 		
+		ax2 = None
 		if len(self.yDf)>1:
 			ax2 = ax.twinx() # Create another axes that shares the same x-axis as ax.
 			self._plot_notes(fig,ax2,1)
@@ -1053,7 +1206,20 @@ class CsvScope:
 			if 'loc_legend2' in serie: loc_legend2 = serie['loc_legend2']
 
 		loc = loc_legend if loc_legend is not None else 'upper right'
-		legenda = ax.legend(loc=loc)
+		loc2 = loc_legend2 if loc_legend2 is not None else 'lower right'
+		if ax2 is None:
+			legenda = ax.legend(loc=loc)
+			legenda2 = None
+		else:
+			# Com dois eixos Y as duas legendas precisam morar no eixo de cima:
+			# o pick_event só desce para os filhos do Axes apontado por
+			# mouseevent.inaxes, que é sempre ax2 (o twinx cobre o ax).
+			h1,l1 = ax.get_legend_handles_labels()
+			h2,l2 = ax2.get_legend_handles_labels()
+			if ax.get_legend() is not None: ax.get_legend().remove()
+			legenda = ax2.legend(h1,l1,loc=loc)
+			ax2.add_artist(legenda)
+			legenda2 = ax2.legend(h2,l2,loc=loc2)
 
 		# Legenda interativa: clique para mostrar/ocultar a linha
 		mapa = {}
@@ -1077,8 +1243,7 @@ class CsvScope:
 
 		fig.canvas.mpl_connect('pick_event', on_pick)
 
-		if loc_legend2 is not None:
-			legenda2 = ax2.legend(loc=loc_legend2)
+		if legenda2 is not None:
 			_map_legend(legenda2, ax2.get_lines())
 		if data != 'None':
 			ax.annotate(data,xy=(0.5,1e-2),xycoords='axes fraction', ha='center', fontsize=8)
