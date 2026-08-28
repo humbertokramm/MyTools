@@ -212,13 +212,20 @@ class KeysightScope:
             if "text" in info:
                 txt = self._format_dso_text(info['text'])
                 self._write(f':DISPlay:ANN:STATe ON')
+                self._write(f':DISPlay:ANN:BACKground TRANsparent')
+                self._write(f':DISPlay:ANN:COLor WHITe')
                 self._write(f':DISPlay:ANN:TEXT "{txt}"')
                 self._write(f':DISPlay:ANN:Y 10')
                 self._write(f':DISPlay:ANN:X 10')
-    
-    def _format_dso_text(self, txt):
-        pos = txt.find(" - ")
-        return txt.replace(' - ',' '*(31-pos))
+
+    def _format_dso_text(self, txt, sep='\n'):
+        r"""Troca o separador por nova linha na anotacao da tela.
+
+        O InfiniiVision interpreta a sequencia \n (barra invertida + n) dentro
+        da string de :DISPlay:ANNotation:TEXT como quebra de linha, entao nao
+        e preciso preencher com espacos para forcar o wrap na largura da caixa.
+        """
+        return txt.replace(sep, r'\n')
     
     # ---------------------------------------------------------
     def single(self):
