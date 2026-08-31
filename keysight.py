@@ -60,6 +60,11 @@ MEAS_MAP_KEYSIGHT = {
     "Vamp": "VAMP",
     "Vavg": "VAVerage",
     "Vrms": "VRMS",
+    # AC RMS: subtrai a componente DC antes do RMS (mede o ripple de um
+    # trilho DC). Nao altera o acoplamento do canal, que segue em DC.
+    # DISPlay = full screen (FS)   |   CYCLe = N Cycles
+    "VrmsAC":      "VRMS DISPlay,AC,{ch}",
+    "VrmsACcycle": "VRMS CYCLe,AC,{ch}",
 
     # Time
     "Frequency": "FREQuency",
@@ -208,7 +213,11 @@ class KeysightScope:
                         self._write(f':FUNCtion1:DISPlay ON')
                         self._write(f':MEASure:{func} FUNCtion1')
                     else:
-                        self._write(f':MEASure:{v} {channel}')
+                        # medidas com argumentos posicionam o canal via {ch}
+                        # (ex: VRMS DISPlay,AC,CHANnel1); as demais recebem o
+                        # canal apos um espaco, como antes.
+                        cmd = v if '{ch}' in v else v + ' {ch}'
+                        self._write(f':MEASure:{cmd.format(ch=channel)}')
             if "text" in info:
                 txt = self._format_dso_text(info['text'])
                 self._write(f':DISPlay:ANN:STATe ON')
