@@ -230,6 +230,40 @@ class TektronixScope:
             time.sleep(delay)
                 
     # ---------------------------------------------------------
+    def set_timebase(self, scale=None, position=None, reference=None):
+        """Configure the horizontal timebase.
+
+        Args:
+            scale     (float): seconds per division.
+            position  (float): deslocamento em segundos entre o trigger e o
+                ponto de referencia.
+            reference (str): ``'left'``, ``'center'`` ou ``'right'``.
+
+        Note:
+            O Tektronix expressa a posicao horizontal em PERCENTUAL do
+            registro antes do trigger, nao em segundos. A conversao usa a
+            largura da tela (10 divisoes x scale) e assume a mesma convencao
+            de sinal do Keysight. Se ``scale`` nao for informado, o valor
+            atual e consultado no instrumento.
+        """
+        if scale is not None:
+            self._write(f'HORizontal:SCAle {scale:.9g}')
+
+        pct = None
+        if reference is not None:
+            pct = {'left': 10.0, 'center': 50.0,
+                   'centre': 50.0, 'right': 90.0}.get(str(reference).lower())
+
+        if position is not None:
+            sc = scale if scale is not None else float(
+                self.inst.query('HORizontal:SCAle?').strip())
+            base = pct if pct is not None else 50.0
+            pct = base - 100.0 * position / (10.0 * sc)
+            pct = max(0.0, min(100.0, pct))
+
+        if pct is not None:
+            self._write(f'HORizontal:POSition {pct:.4f}')
+
     def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
         """Configure the edge trigger.
 

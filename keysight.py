@@ -243,6 +243,34 @@ class KeysightScope:
         return txt.replace(sep, r'\n')
     
     # ---------------------------------------------------------
+    def set_timebase(self, scale=None, position=None, reference=None):
+        """Configure the horizontal timebase.
+
+        Only the arguments actually informed are sent, so it can be used to
+        adjust just the scale, just the trigger position, or both.
+
+        Args:
+            scale     (float): seconds per division (ex: 20e-9 = 20 ns/div).
+            position  (float): deslocamento em segundos entre o trigger e o
+                ponto de referencia da tela. 0 deixa o trigger sobre a
+                referencia; valores diferentes deslocam a forma de onda.
+            reference (str): onde fica o ponto de referencia -- ``'left'``,
+                ``'center'`` ou ``'right'``.
+
+        Note:
+            A referencia e aplicada antes da posicao, pois a posicao e medida
+            em relacao a ela.
+        """
+        if scale is not None:
+            self._write(f':TIMebase:SCALe {scale:.9g}')
+        if reference is not None:
+            ref = {'left': 'LEFT', 'center': 'CENTer',
+                   'centre': 'CENTer', 'right': 'RIGHt'
+                   }.get(str(reference).lower(), reference)
+            self._write(f':TIMebase:REFerence {ref}')
+        if position is not None:
+            self._write(f':TIMebase:POSition {position:.9g}')
+
     def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
         """Configure the edge trigger.
 

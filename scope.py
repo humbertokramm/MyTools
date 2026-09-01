@@ -171,6 +171,26 @@ class Scope:
             interval=interval,
         )
 
+    def set_timebase(self, scale=None, position=None, reference=None):
+        """Configure the horizontal timebase (scale and trigger position).
+
+        Only the informed arguments are applied.
+
+        Args:
+            scale     (float): seconds per division (ex: ``20e-9`` = 20 ns/div).
+            position  (float): deslocamento em segundos entre o trigger e o
+                ponto de referencia da tela.
+            reference (str): ``'left'``, ``'center'`` ou ``'right'``.
+
+        Note:
+            No Keysight a posicao e nativa em segundos. No Tektronix ela e
+            percentual e a conversao usa a largura da tela; via SSH isso
+            exige informar ``scale`` junto. Nao suportado no TDS3052B via
+            HTTP (no-op).
+        """
+        self.driver.set_timebase(scale=scale, position=position,
+                                 reference=reference)
+
     def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
         """Configure the edge trigger (source, level and slope).
 

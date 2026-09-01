@@ -156,6 +156,11 @@ class TektronixNetScope:
             print("monitor_single: not supported over HTTP")
         return False
 
+    def set_timebase(self, scale=None, position=None, reference=None):
+        """No-op: timebase control not supported over HTTP."""
+        if self.debug:
+            print("set_timebase: not supported over HTTP")
+
     def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
         """No-op: trigger control not supported over HTTP."""
         if self.debug:

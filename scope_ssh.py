@@ -715,6 +715,58 @@ class SshScope:
         result = self._run_script(script)
         return result.get('triggered', False)
 
+    def set_timebase(self, scale=None, position=None, reference=None):
+        """Configure the horizontal timebase on the remote oscilloscope.
+
+        Args:
+            scale     (float): seconds per division.
+            position  (float): deslocamento em segundos entre o trigger e o
+                ponto de referencia.
+            reference (str): ``'left'``, ``'center'`` ou ``'right'``.
+
+        Note:
+            No Tektronix a posicao e percentual, entao a conversao para
+            segundos exige ``scale``. Como o script remoto so escreve
+            comandos (nao consulta o instrumento), informar ``position`` sem
+            ``scale`` aplica apenas a ``reference`` nesse driver. No Keysight
+            a posicao e nativa em segundos e nao tem essa restricao.
+        """
+        keys, tek = [], []
+
+        if scale is not None:
+            keys.append(f':TIMebase:SCALe {scale:.9g}')
+            tek.append(f'HORizontal:SCAle {scale:.9g}')
+
+        ks_ref = {'left': 'LEFT', 'center': 'CENTer',
+                  'centre': 'CENTer', 'right': 'RIGHt'}
+        tk_ref = {'left': 10.0, 'center': 50.0, 'centre': 50.0, 'right': 90.0}
+
+        pct = None
+        if reference is not None:
+            r = str(reference).lower()
+            keys.append(f':TIMebase:REFerence {ks_ref.get(r, reference)}')
+            pct = tk_ref.get(r)
+
+        if position is not None:
+            keys.append(f':TIMebase:POSition {position:.9g}')
+            if scale is not None:
+                base = pct if pct is not None else 50.0
+                pct = max(0.0, min(100.0,
+                                   base - 100.0 * position / (10.0 * scale)))
+
+        if pct is not None:
+            tek.append(f'HORizontal:POSition {pct:.4f}')
+
+        if not keys and not tek:
+            return
+
+        script = self._build_script(
+            _SCPI_TEMPLATE,
+            resource = self.visa_resource,
+            commands = {'TEKTRONIX': tek, 'KEYSIGHT': keys, 'AGILENT': keys},
+        )
+        self._run_script(script)
+
     def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
         """Configure the edge trigger on the remote oscilloscope.
 
