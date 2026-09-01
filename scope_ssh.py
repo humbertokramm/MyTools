@@ -715,6 +715,40 @@ class SshScope:
         result = self._run_script(script)
         return result.get('triggered', False)
 
+    def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
+        """Configure the edge trigger on the remote oscilloscope.
+
+        Args:
+            channel (str): trigger source, e.g. ``'CH1'``.
+            level   (float): trigger level in volts.
+            slope   (str): ``'rise'`` or ``'fall'`` (also accepts
+                ``'positive'``/``'negative'`` and ``'+'``/``'-'``).
+            mode    (str): ``'NORMal'`` waits for a real edge; ``'AUTO'``
+                free-runs when none arrives. Use NORMal before :meth:`single`.
+        """
+        fall  = str(slope).lower() in ('fall', 'falling', 'neg', 'negative', '-')
+        ks_ch = channel.replace('CH', 'CHANnel')   # CH1 -> CHANnel1
+        tek = [
+            'TRIGger:A:TYPe EDGE',
+            f'TRIGger:A:EDGE:SOUrce {channel}',
+            f'TRIGger:A:EDGE:SLOpe {"FALL" if fall else "RISe"}',
+            f'TRIGger:A:LEVel {level:.6f}',
+            f'TRIGger:A:MODe {mode}',
+        ]
+        keys = [
+            ':TRIGger:MODE EDGE',
+            f':TRIGger:EDGE:SOURce {ks_ch}',
+            f':TRIGger:EDGE:SLOPe {"NEGative" if fall else "POSitive"}',
+            f':TRIGger:EDGE:LEVel {level:.6f},{ks_ch}',
+            f':TRIGger:SWEep {mode}',
+        ]
+        script = self._build_script(
+            _SCPI_TEMPLATE,
+            resource = self.visa_resource,
+            commands = {'TEKTRONIX': tek, 'KEYSIGHT': keys, 'AGILENT': keys},
+        )
+        self._run_script(script)
+
     def single(self):
         """Arm the remote oscilloscope for a single triggered acquisition."""
         script = self._build_script(

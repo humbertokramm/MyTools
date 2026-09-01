@@ -171,6 +171,24 @@ class Scope:
             interval=interval,
         )
 
+    def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
+        """Configure the edge trigger (source, level and slope).
+
+        Args:
+            channel (str): trigger source, e.g. ``'CH1'``.
+            level   (float): trigger level in volts.
+            slope   (str): ``'rise'`` or ``'fall'`` (also accepts
+                ``'positive'``/``'negative'`` and ``'+'``/``'-'``).
+            mode    (str): ``'NORMal'`` waits for a real edge; ``'AUTO'``
+                free-runs when none arrives. Keep NORMal when arming
+                :meth:`single`, senao a captura termina sem trigger real.
+
+        Note:
+            Nao suportado no TDS3052B via HTTP (no-op).
+        """
+        self.driver.set_trigger(channel=channel, level=level,
+                                slope=slope, mode=mode)
+
     def single(self):
         """Arm the oscilloscope for a single triggered acquisition."""
         self.driver.single()

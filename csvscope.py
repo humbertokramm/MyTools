@@ -869,7 +869,20 @@ class CsvScope:
 				s['info'][d]=[rms,text]
 				self.yDf['draw'][indexLabel].append([cord,text,style,dir,name])
 				return
-				
+
+			elif d == 'AC RMS':
+				# Mesma medida do "AC RMS - FS" do DSO: remove o nivel DC
+				# (media) antes do RMS, sobrando so o ripple.
+				acrms = np.sqrt(((y - y.mean())**2).mean())
+				meio = int(len(y)/2)
+				cord=[[x[meio],y[meio]],[None,None]]
+				text=d+ ': '+format_value(acrms,s,'y',decimals=4)
+				style = '->'
+				dir = 'SE'
+				s['info'][d]=[acrms,text]
+				self.yDf['draw'][indexLabel].append([cord,text,style,dir,name])
+				return
+
 			elif d == 'ΔV':
 				i1 = y.idxmin()
 				y1 = y[i1]

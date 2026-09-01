@@ -201,10 +201,16 @@ class KeysightScope:
                 for v in info['meas']:
                     v = self._map_measure(v)
                     if v == 'RISetime' or v == 'FALLtime':
+                        # ABSolute garante que os valores sejam lidos em volts.
+                        # Sem isso, o instrumento pode estar em PERCent (padrao
+                        # de fabrica) e interpretar 2.0 como 2%, nao 2 V.
+                        # O middle e usado por period/frequency/duty; se nao
+                        # informado, usa o ponto medio entre lower e upper.
                         LOWer = info['threshold']['lower']
                         UPPer = info['threshold']['upper']
-                        self._write(f':MEASure:LOWer {LOWer:.6f}')
-                        self._write(f':MEASure:UPPer {UPPer:.6f}')
+                        MIDDle = info['threshold'].get('middle', (LOWer + UPPer) / 2)
+                        self._write(f':MEASure:DEFine THResholds,ABSolute,'
+                                    f'{UPPer:.6f},{MIDDle:.6f},{LOWer:.6f}')
                     
                     if 'FFT' in v:
                         func = re.search(r"\((.*?)\)", v).group(1)
@@ -237,6 +243,26 @@ class KeysightScope:
         return txt.replace(sep, r'\n')
     
     # ---------------------------------------------------------
+    def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
+        """Configure the edge trigger.
+
+        Args:
+            channel (str): trigger source, e.g. ``'CH1'``.
+            level   (float): trigger level in volts.
+            slope   (str): ``'rise'`` or ``'fall'`` (also accepts
+                ``'positive'``/``'negative'`` and ``'+'``/``'-'``).
+            mode    (str): ``'NORMal'`` waits for a real edge; ``'AUTO'``
+                free-runs when none arrives. Use NORMal before :meth:`single`,
+                caso contrario a captura termina sem ter havido trigger.
+        """
+        ch   = self._channel_name(channel)
+        fall = str(slope).lower() in ('fall', 'falling', 'neg', 'negative', '-')
+        self._write(':TRIGger:MODE EDGE')
+        self._write(f':TRIGger:EDGE:SOURce {ch}')
+        self._write(f':TRIGger:EDGE:SLOPe {"NEGative" if fall else "POSitive"}')
+        self._write(f':TRIGger:EDGE:LEVel {level:.6f},{ch}')
+        self._write(f':TRIGger:SWEep {mode}')
+
     def single(self):
         """Arm the oscilloscope for a single triggered acquisition."""
         self._write(':SINGle')

@@ -230,6 +230,24 @@ class TektronixScope:
             time.sleep(delay)
                 
     # ---------------------------------------------------------
+    def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
+        """Configure the edge trigger.
+
+        Args:
+            channel (str): trigger source, e.g. ``'CH1'``.
+            level   (float): trigger level in volts.
+            slope   (str): ``'rise'`` or ``'fall'`` (also accepts
+                ``'positive'``/``'negative'`` and ``'+'``/``'-'``).
+            mode    (str): ``'NORMal'`` waits for a real edge; ``'AUTO'``
+                free-runs when none arrives. Use NORMal before :meth:`single`.
+        """
+        fall = str(slope).lower() in ('fall', 'falling', 'neg', 'negative', '-')
+        self._write('TRIGger:A:TYPe EDGE')
+        self._write(f'TRIGger:A:EDGE:SOUrce {channel}')
+        self._write(f'TRIGger:A:EDGE:SLOpe {"FALL" if fall else "RISe"}')
+        self._write(f'TRIGger:A:LEVel {level:.6f}')
+        self._write(f'TRIGger:A:MODe {mode}')
+
     def single(self):
         """Arm the oscilloscope for a single triggered acquisition."""
         self._write('ACQuire:STOPAfter SEQuence')
