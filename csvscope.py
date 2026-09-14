@@ -1262,8 +1262,14 @@ class CsvScope:
 			ax.annotate(data,xy=(0.5,1e-2),xycoords='axes fraction', ha='center', fontsize=8)
 
 		# SpanSelector: arrasta para ver ΔT; duplo-clique para limpar
+		# O eixo X esta na unidade do label (ex: Time[us] -> engNoteX 1e-6),
+		# entao a selecao precisa voltar para segundos antes de escolher a
+		# unidade do texto -- senao 5 us aparece como "5 s".
+		xfactor = (self.reads[0]['engNoteX'] if self.reads
+				   else format_eng(self.labelx))
+
 		def _fmt_dt(dt):
-			"""Formata ΔT com a unidade mais legível."""
+			"""Formata ΔT (recebido em segundos) com a unidade mais legível."""
 			abs_dt = abs(dt)
 			if abs_dt >= 1:       return f'ΔT = {dt:.4g} s'
 			if abs_dt >= 1e-3:    return f'ΔT = {dt*1e3:.4g} ms'
@@ -1274,7 +1280,7 @@ class CsvScope:
 		fig._span_text = None  # referência ao texto exibido
 
 		def on_span(xmin, xmax):
-			dt = xmax - xmin
+			dt = (xmax - xmin) * xfactor   # unidade do eixo -> segundos
 			if abs(dt) < 1e-15:
 				return
 			# Remove texto anterior
