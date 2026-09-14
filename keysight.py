@@ -4,6 +4,7 @@ from time import sleep
 from fractions import Fraction
 from pprint import pprint
 import re
+from pyvisa.errors import VisaIOError
 
 
 '''
@@ -67,7 +68,7 @@ MEAS_MAP_KEYSIGHT = {
     "VrmsACcycle": "VRMS CYCLe,AC,{ch}",
 
     # Time
-    "Frequency": "FREQuency",
+    "Freq": "FREQuency",
     "Period": "PERiod",
     "RiseTime": "RISetime",
     "FallTime": "FALLtime",
@@ -76,6 +77,10 @@ MEAS_MAP_KEYSIGHT = {
     "PosWidth": "PWIDth",
     "NegWidth": "NWIDth",
     "DutyCycle": "DUTYcycle",
+
+    # Count (contagem na tela)
+    "+PCount": "PPULses",
+    "-PCount": "NPULses",
 
     # Signal quality
     "Overshoot": "OVERshoot",
@@ -102,7 +107,7 @@ class KeysightScope:
         ch = self._channel_name(channel)
         
         # Verifica se o canal está ativo
-        disp = int(self.inst.query(f":{ch}:DISP?"))
+        disp = int(self._query(f":{ch}:DISP?"))
         if disp == 0:
             raise RuntimeError(f"Canal {channel} não está exibido na tela")
         
@@ -111,15 +116,15 @@ class KeysightScope:
         self._write(":WAV:MODE RAW")
 
         try:
-            xinc = float(self.inst.query(":WAV:XINC?"))
+            xinc = float(self._query(":WAV:XINC?"))
         except Exception:
             raise RuntimeError(f"Canal {channel} não possui waveform válido")
         
-        xorig = float(self.inst.query(":WAV:XOR?"))
+        xorig = float(self._query(":WAV:XOR?"))
 
-        yinc = float(self.inst.query(":WAV:YINC?"))
-        yorig = float(self.inst.query(":WAV:YOR?"))
-        yref = float(self.inst.query(":WAV:YREF?"))
+        yinc = float(self._query(":WAV:YINC?"))
+        yorig = float(self._query(":WAV:YOR?"))
+        yref = float(self._query(":WAV:YREF?"))
         chset = self.get_channel_settings(channel)
 
         raw = self.inst.query_binary_values(":WAV:DATA?", datatype='B', container=np.array)
@@ -127,7 +132,7 @@ class KeysightScope:
         voltage = (raw - yref) * yinc + yorig
         time = np.arange(len(raw)) * xinc + xorig
         metadata = {
-            "Instrumento": self.inst.query("*IDN?").strip(),
+            "Instrumento": self._query("*IDN?").strip(),
             "Canal": channel,
             "Sample Rate (calculado)": 1 / xinc,
             "Record Length": len(raw),
@@ -149,11 +154,11 @@ class KeysightScope:
         res = {}
         channel = self._channel_name(channel)
         if "CH" in channel:
-            res['coupling'] = self.inst.query(f":{channel}:COUPling?").strip()
-            probe = self.inst.query(f":{channel}:PROBe?").strip()
-            res["inverted"] = "ON" if self.inst.query(f":{channel}:INVert?").strip() == "1" else "OFF"
-            res["BW"] = "ON" if self.inst.query(f":{channel}:BWLimit?").strip() == "1" else "OFF"
-        res['vertical_scale'] = f"{self.inst.query(f":{channel}:SCALe?").strip()} V/div"
+            res['coupling'] = self._query(f":{channel}:COUPling?").strip()
+            probe = self._query(f":{channel}:PROBe?").strip()
+            res["inverted"] = "ON" if self._query(f":{channel}:INVert?").strip() == "1" else "OFF"
+            res["BW"] = "ON" if self._query(f":{channel}:BWLimit?").strip() == "1" else "OFF"
+        res['vertical_scale'] = f"{self._query(f":{channel}:SCALe?").strip()} V/div"
         return res
     
     def capture_screen(self):
@@ -243,6 +248,40 @@ class KeysightScope:
         return txt.replace(sep, r'\n')
     
     # ---------------------------------------------------------
+    def _channel_count(self):
+        """Numero de canais analogicos, deduzido do modelo no *IDN?.
+
+        O ultimo digito do modelo indica a quantidade de canais
+        (DSO-X 3102A -> 2, DSOX3104A -> 4). Cai para 4 se nao der para
+        deduzir. O valor e consultado uma vez e guardado.
+        """
+        if getattr(self, '_nchan', None) is None:
+            n = 4
+            try:
+                modelo = self._query('*IDN?').split(',')[1].strip()
+                m = re.search(r'(\d)\D*$', modelo)
+                if m:
+                    n = max(1, min(4, int(m.group(1))))
+            except Exception:
+                pass
+            self._nchan = n
+        return self._nchan
+
+    def show_channels(self, channels, total=None):
+        """Exibe apenas os canais informados, desligando os demais.
+
+        Args:
+            channels (str or list): ``'CH1'`` ou ``['CH1', 'CH3']``.
+            total    (int): quantos canais varrer. Por padrao usa o numero
+                deduzido do modelo.
+        """
+        if isinstance(channels, str):
+            channels = [channels]
+        alvo = {self._channel_name(c) for c in channels}
+        for n in range(1, (total or self._channel_count()) + 1):
+            ch = f'CHANnel{n}'
+            self._write(f':{ch}:DISPlay {1 if ch in alvo else 0}')
+
     def set_timebase(self, scale=None, position=None, reference=None):
         """Configure the horizontal timebase.
 
@@ -342,6 +381,31 @@ class KeysightScope:
         self._write(':STOP')
 
     # ---------------------------------------------------------
+    def _query(self, txt, retries=1):
+        """Query com recuperacao de timeout.
+
+        Um VI_ERROR_TMO normalmente nao significa que a query e invalida, e
+        sim que o link ficou dessincronizado (resposta anterior lida pela
+        metade, transferencia binaria interrompida) ou que o instrumento
+        estava ocupado. O device clear do VISA descarta as filas de entrada
+        e saida, devolvendo a interface a um estado conhecido antes de
+        repetir. Sem isso, o primeiro timeout costuma contaminar todas as
+        leituras seguintes.
+        """
+        for tentativa in range(retries + 1):
+            try:
+                return self.inst.query(txt)
+            except VisaIOError:
+                if tentativa == retries:
+                    raise
+                if self.debug:
+                    print(f"timeout em '{txt}' -- device clear e nova tentativa")
+                try:
+                    self.inst.clear()
+                except Exception:
+                    pass
+                sleep(0.5)
+
     def _write(self, txt):
         if self.debug:
             self.inst.write('*CLS')

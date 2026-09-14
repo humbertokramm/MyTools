@@ -2,6 +2,7 @@ import numpy as np
 from datetime import datetime
 from fractions import Fraction
 import time
+import re
 
 """
 1. Medições de Tensão (Amplitude)
@@ -230,6 +231,40 @@ class TektronixScope:
             time.sleep(delay)
                 
     # ---------------------------------------------------------
+    def _channel_count(self):
+        """Numero de canais analogicos, deduzido do modelo no *IDN?.
+
+        O ultimo digito do modelo indica a quantidade de canais
+        (DPO2024 -> 4, TDS3052B -> 2). Cai para 4 se nao der para deduzir.
+        O valor e consultado uma vez e guardado.
+        """
+        if getattr(self, '_nchan', None) is None:
+            n = 4
+            try:
+                modelo = self.inst.query('*IDN?').split(',')[1].strip()
+                m = re.search(r'(\d)\D*$', modelo)
+                if m:
+                    n = max(1, min(4, int(m.group(1))))
+            except Exception:
+                pass
+            self._nchan = n
+        return self._nchan
+
+    def show_channels(self, channels, total=None):
+        """Exibe apenas os canais informados, desligando os demais.
+
+        Args:
+            channels (str or list): ``'CH1'`` ou ``['CH1', 'CH3']``.
+            total    (int): quantos canais varrer. Por padrao usa o numero
+                deduzido do modelo.
+        """
+        if isinstance(channels, str):
+            channels = [channels]
+        alvo = {str(c).upper().replace('CHANNEL', 'CH') for c in channels}
+        for n in range(1, (total or self._channel_count()) + 1):
+            ch = f'CH{n}'
+            self._write(f'SELect:{ch} {"ON" if ch in alvo else "OFF"}')
+
     def set_timebase(self, scale=None, position=None, reference=None):
         """Configure the horizontal timebase.
 
@@ -240,29 +275,37 @@ class TektronixScope:
             reference (str): ``'left'``, ``'center'`` ou ``'right'``.
 
         Note:
-            O Tektronix expressa a posicao horizontal em PERCENTUAL do
-            registro antes do trigger, nao em segundos. A conversao usa a
-            largura da tela (10 divisoes x scale) e assume a mesma convencao
-            de sinal do Keysight. Se ``scale`` nao for informado, o valor
-            atual e consultado no instrumento.
+            O Tektronix tem dois modos de posicionamento, mutuamente
+            exclusivos, e escrever no modo errado e ignorado em silencio
+            (sem erro de SCPI -- verificado num DPO2024):
+
+            - ``DELay:MODe OFF`` -> ``HORizontal:POSition``, em PERCENTUAL
+              do registro antes do trigger.
+            - ``DELay:MODe ON``  -> ``HORizontal:DELay:TIMe``, em SEGUNDOS,
+              com a referencia fixa no centro da tela.
+
+            Por isso o modo e sempre definido explicitamente aqui. Com
+            ``reference`` usa-se o percentual (a referencia so existe nesse
+            modo); so com ``position``, usa-se o modo delay, que aceita
+            segundos direto -- mesma semantica do Keysight, sem conversao.
         """
         if scale is not None:
             self._write(f'HORizontal:SCAle {scale:.9g}')
 
-        pct = None
         if reference is not None:
             pct = {'left': 10.0, 'center': 50.0,
-                   'centre': 50.0, 'right': 90.0}.get(str(reference).lower())
-
-        if position is not None:
-            sc = scale if scale is not None else float(
-                self.inst.query('HORizontal:SCAle?').strip())
-            base = pct if pct is not None else 50.0
-            pct = base - 100.0 * position / (10.0 * sc)
+                   'centre': 50.0, 'right': 90.0}.get(str(reference).lower(), 50.0)
+            if position is not None:
+                sc = scale if scale is not None else float(
+                    self.inst.query('HORizontal:SCAle?').strip())
+                pct = pct - 100.0 * position / (10.0 * sc)
             pct = max(0.0, min(100.0, pct))
-
-        if pct is not None:
+            self._write('HORizontal:DELay:MODe OFF')
             self._write(f'HORizontal:POSition {pct:.4f}')
+
+        elif position is not None:
+            self._write('HORizontal:DELay:MODe ON')
+            self._write(f'HORizontal:DELay:TIMe {position:.9g}')
 
     def set_trigger(self, channel='CH1', level=0.0, slope='rise', mode='NORMal'):
         """Configure the edge trigger.

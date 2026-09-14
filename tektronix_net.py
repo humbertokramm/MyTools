@@ -156,6 +156,11 @@ class TektronixNetScope:
             print("monitor_single: not supported over HTTP")
         return False
 
+    def show_channels(self, channels, total=None):
+        """No-op: channel display control not supported over HTTP."""
+        if self.debug:
+            print("show_channels: not supported over HTTP")
+
     def set_timebase(self, scale=None, position=None, reference=None):
         """No-op: timebase control not supported over HTTP."""
         if self.debug:

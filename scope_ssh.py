@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 
 import numpy as np
 
@@ -714,6 +715,36 @@ class SshScope:
         )
         result = self._run_script(script)
         return result.get('triggered', False)
+
+    def show_channels(self, channels, total=4):
+        """Exibe apenas os canais informados, desligando os demais.
+
+        Args:
+            channels (str or list): ``'CH1'`` ou ``['CH1', 'CH3']``.
+            total    (int): quantos canais varrer. Aqui o padrao e fixo em 4
+                porque o script remoto so escreve comandos, sem consultar o
+                modelo; num aparelho de 2 canais os comandos extras apenas
+                entram na fila de erro do instrumento, sem efeito.
+        """
+        if isinstance(channels, str):
+            channels = [channels]
+        nums = set()
+        for c in channels:
+            m = re.search(r'(\d+)', str(c))
+            if m:
+                nums.add(int(m.group(1)))
+
+        keys, tek = [], []
+        for n in range(1, total + 1):
+            keys.append(f':CHANnel{n}:DISPlay {1 if n in nums else 0}')
+            tek.append(f'SELect:CH{n} {"ON" if n in nums else "OFF"}')
+
+        script = self._build_script(
+            _SCPI_TEMPLATE,
+            resource = self.visa_resource,
+            commands = {'TEKTRONIX': tek, 'KEYSIGHT': keys, 'AGILENT': keys},
+        )
+        self._run_script(script)
 
     def set_timebase(self, scale=None, position=None, reference=None):
         """Configure the horizontal timebase on the remote oscilloscope.

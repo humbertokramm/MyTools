@@ -129,10 +129,59 @@ class Scope:
     # ---------------------------------------------------------
     # screenshot
     # ---------------------------------------------------------
+    def show_channels(self, channels, total=None):
+        """Exibe apenas os canais da lista, desligando todos os outros.
+
+        Útil antes de capturar, para que a tela e o PNG mostrem somente os
+        sinais de interesse::
+
+            SC.show_channels(['CH1', 'CH3'])
+
+        Args:
+            channels (str or list): ``'CH1'`` ou ``['CH1', 'CH3']``.
+            total    (int): quantos canais varrer. Por padrao os drivers
+                locais deduzem do modelo no ``*IDN?`` (ultimo digito), e o
+                driver SSH assume 4.
+
+        Note:
+            Um canal desligado nao pode ter a forma de onda lida -- o
+            :meth:`capture_waveform` recusa canais fora da tela. Nao desligue
+            um canal que ainda vai ser capturado.
+        """
+        if total is None:
+            self.driver.show_channels(channels)
+        else:
+            self.driver.show_channels(channels, total=total)
+
+    def set_channel_settings(self, channel, info):
+        """Apply label, cursors and measurements to *channel*.
+
+        Chamado automaticamente por :meth:`capture_screen`, mas exposto aqui
+        para ser usado antes da captura -- util para posicionar os cursores e
+        conferir na tela antes de salvar.
+
+        Nesse caso, passe ``info=False`` na captura para nao reaplicar tudo::
+
+            SC.set_channel_settings('CH1', infos)
+            input('Ajuste os cursores e tecle ENTER...')
+            SC.main(file, scope=SC, channel='CH1')   # info=False (padrao)
+
+        Args:
+            channel (str): canal, ex ``'CH1'``.
+            info    (dict): mesmo dicionario aceito por :meth:`main` --
+                ``label``, ``cursor``, ``meas``, ``threshold``, ``text``.
+
+        Note:
+            No driver SSH isso apenas guarda a configuracao; ela e enviada ao
+            instrumento no :meth:`capture_screen`, para que setup e captura
+            aconteçam numa unica sessao remota.
+        """
+        self.driver.set_channel_settings(channel, info)
+
     def capture_screen(self, filename,ch,info=False):
-        
+
         self.driver.set_channel_settings(ch,info)
-        
+
         filename += "-screen.png"
         if self._file_exists(filename):
             return
