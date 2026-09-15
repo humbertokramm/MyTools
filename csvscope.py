@@ -117,6 +117,10 @@ class CsvScope:
 			"maxLimits":False
 		}
 		self.labelx='Time[ms]'
+		# Onde escrever o valor das linhas de limite: 'left', 'right' ou
+		# False para ocultar. Padrao 'left' porque a legenda costuma ficar
+		# no canto superior direito.
+		self.limitLabels='left'
 		self.dt = [0.1,0.9]
 		self.fftZone = None
 		self.fftZonetxt = 'left'
@@ -1137,6 +1141,23 @@ class CsvScope:
 			return texto  # Retorna sem modificação
 
 	def _apply_mask(self,ax):
+		# Rotulo com o valor de cada linha de limite. Texto junto a linha em
+		# vez de tick no eixo: o tick mostraria so o numero (sem dizer se e
+		# ViL, ViH ou limite absoluto) e colidiria com os ticks existentes
+		# quando o limite cai perto de um deles (ex: ViL 0.99 x tick 1.0).
+		pos = getattr(self, 'limitLabels', 'left')
+		unidade = self.reads[0].get('symbolY', '') if self.reads else ''
+		xpos, ha = (0.004, 'left') if pos == 'left' else (0.996, 'right')
+
+		def _rotula(y, nome, cor):
+			if pos not in ('left', 'right'):
+				return
+			ax.text(xpos, y, f'{nome} {y:g}{unidade}',
+					transform=ax.get_yaxis_transform(),   # x relativo, y nos dados
+					ha=ha, va='bottom', fontsize=7, color=cor, zorder=6,
+					bbox=dict(boxstyle='round,pad=0.15', facecolor='white',
+							  alpha=0.75, edgecolor='none'))
+
 		# =============================
 		# Optional logic mask
 		# =============================
@@ -1145,14 +1166,18 @@ class CsvScope:
 				ax.axhspan(self.Limits['logicLimits']["low_min"], self.Limits['logicLimits']["low_max"], alpha=0.15)
 				ax.axhspan(self.Limits['logicLimits']["high_min"], self.Limits['logicLimits']["high_max"], alpha=0.15)
 
-				ax.axhline(self.Limits['logicLimits']["low_max"], linestyle='--', linewidth=0.8)
-				ax.axhline(self.Limits['logicLimits']["high_min"], linestyle='--', linewidth=0.8)
+				ln = ax.axhline(self.Limits['logicLimits']["low_max"], linestyle='--', linewidth=0.8)
+				_rotula(self.Limits['logicLimits']["low_max"], 'ViL', ln.get_color())
+				ln = ax.axhline(self.Limits['logicLimits']["high_min"], linestyle='--', linewidth=0.8)
+				_rotula(self.Limits['logicLimits']["high_min"], 'ViH', ln.get_color())
 
 		# Max limits (independent)
 		if 'maxLimits' in self.Limits:
 			if self.Limits['maxLimits']:
 				ax.axhline(self.Limits['maxLimits']["low"], linestyle='--', linewidth=0.8, color="red")
+				_rotula(self.Limits['maxLimits']["low"], 'min', 'red')
 				ax.axhline(self.Limits['maxLimits']["high"], linestyle='--', linewidth=0.8, color="red")
+				_rotula(self.Limits['maxLimits']["high"], 'max', 'red')
 		return ax
 
 	def plot(self,t='nan',grid = True,size=(12, 6),out='png',path='',transparent=False):
