@@ -20,6 +20,8 @@ if "%OPCAO_GIT%"=="1" (
     cd /d C:\Projetos\platf-scripts-lua
     git checkout develop
     git fetch origin
+    rem Remove flags skip-worktree/assume-unchanged que impedem o reset
+    powershell -NoProfile -Command "git ls-files -v | Where-Object { $_ -cmatch '^[a-zS] ' } | ForEach-Object { $f = $_.Substring(2); Write-Host ('Liberando arquivo travado no indice: ' + $f); git update-index --no-skip-worktree -- $f; git update-index --no-assume-unchanged -- $f }"
     git reset --hard origin/develop
     git clean -fd
     echo.
