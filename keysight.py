@@ -282,6 +282,34 @@ class KeysightScope:
             ch = f'CHANnel{n}'
             self._write(f':{ch}:DISPlay {1 if ch in alvo else 0}')
 
+    def set_vertical(self, channel='CH1', scale=None, offset=None, position=None):
+        """Configure a escala vertical de um canal.
+
+        Só o que for informado e enviado, como no :meth:`set_timebase`.
+
+        Args:
+            channel (str): canal, ex ``'CH1'``.
+            scale   (float): volts por divisao.
+            offset  (float): tensao no centro da tela, em volts.
+            position (float): deslocamento em DIVISOES. Atalho para o offset
+                (``offset = -position * scale``); se ambos forem informados,
+                este prevalece.
+
+        Note:
+            O InfiniiVision nao tem comando de posicao em divisoes -- so
+            ``:CHANnel<n>:OFFSet`` em volts. A conversao aqui assume que
+            position positivo sobe o traco; nao foi verificada em bancada.
+            Para algo deterministico, use ``offset``.
+        """
+        ch = self._channel_name(channel)
+        if scale is not None:
+            self._write(f':{ch}:SCALe {scale:.9g}')
+        if offset is not None:
+            self._write(f':{ch}:OFFSet {offset:.9g}')
+        if position is not None:
+            sc = scale if scale is not None else float(self._query(f':{ch}:SCALe?'))
+            self._write(f':{ch}:OFFSet {-position * sc:.9g}')
+
     def set_timebase(self, scale=None, position=None, reference=None):
         """Configure the horizontal timebase.
 

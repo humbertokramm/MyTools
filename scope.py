@@ -129,6 +129,29 @@ class Scope:
     # ---------------------------------------------------------
     # screenshot
     # ---------------------------------------------------------
+    def set_vertical(self, channel='CH1', scale=None, offset=None, position=None):
+        """Configure a escala vertical de um canal (eixo Y).
+
+        Equivalente vertical do :meth:`set_timebase` -- só o que for
+        informado e aplicado, mas aqui por canal::
+
+            SC.set_vertical('CH1', scale=0.5, offset=1.65)
+
+        Args:
+            channel (str): canal, ex ``'CH1'``.
+            scale   (float): volts por divisao.
+            offset  (float): tensao de offset, em volts.
+            position (float): deslocamento em DIVISOES.
+
+        Note:
+            ``offset`` e nativo nos dois fabricantes e e a opcao previsivel.
+            ``position`` em divisoes e nativo no Tektronix; no Keysight e
+            convertido para offset e nao foi verificado em bancada. Nao
+            suportado no TDS3052B via HTTP (no-op).
+        """
+        self.driver.set_vertical(channel=channel, scale=scale,
+                                 offset=offset, position=position)
+
     def show_channels(self, channels, total=None):
         """Exibe apenas os canais da lista, desligando todos os outros.
 

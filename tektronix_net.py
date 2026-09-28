@@ -156,6 +156,11 @@ class TektronixNetScope:
             print("monitor_single: not supported over HTTP")
         return False
 
+    def set_vertical(self, channel='CH1', scale=None, offset=None, position=None):
+        """No-op: vertical control not supported over HTTP."""
+        if self.debug:
+            print("set_vertical: not supported over HTTP")
+
     def show_channels(self, channels, total=None):
         """No-op: channel display control not supported over HTTP."""
         if self.debug:

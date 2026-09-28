@@ -265,6 +265,32 @@ class TektronixScope:
             ch = f'CH{n}'
             self._write(f'SELect:{ch} {"ON" if ch in alvo else "OFF"}')
 
+    def set_vertical(self, channel='CH1', scale=None, offset=None, position=None):
+        """Configure a escala vertical de um canal.
+
+        Só o que for informado e enviado, como no :meth:`set_timebase`.
+
+        Args:
+            channel (str): canal, ex ``'CH1'``.
+            scale   (float): volts por divisao.
+            offset  (float): offset em volts, subtraido antes de digitalizar.
+            position (float): posicao vertical em DIVISOES.
+
+        Note:
+            Aqui offset e position sao comandos distintos e independentes do
+            instrumento -- ``CH<n>:OFFSet`` desloca o sinal antes da
+            digitalizacao (afeta o range util do ADC) e ``CH<n>:POSition`` so
+            move o traco na tela. Nao e o caso do Keysight, que tem apenas o
+            offset em volts.
+        """
+        ch = str(channel).upper().replace('CHANNEL', 'CH')
+        if scale is not None:
+            self._write(f'{ch}:SCAle {scale:.9g}')
+        if offset is not None:
+            self._write(f'{ch}:OFFSet {offset:.9g}')
+        if position is not None:
+            self._write(f'{ch}:POSition {position:.9g}')
+
     def set_timebase(self, scale=None, position=None, reference=None):
         """Configure the horizontal timebase.
 

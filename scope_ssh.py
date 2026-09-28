@@ -716,6 +716,46 @@ class SshScope:
         result = self._run_script(script)
         return result.get('triggered', False)
 
+    def set_vertical(self, channel='CH1', scale=None, offset=None, position=None):
+        """Configure a escala vertical de um canal no osciloscopio remoto.
+
+        Args:
+            channel (str): canal, ex ``'CH1'``.
+            scale   (float): volts por divisao.
+            offset  (float): offset em volts.
+            position (float): posicao vertical em DIVISOES.
+
+        Note:
+            No Keysight a posicao vira offset (``-position * scale``), o que
+            exige informar ``scale`` junto -- o script remoto so escreve
+            comandos, sem consultar o instrumento. No Tektronix a posicao e
+            um comando proprio e nao tem essa restricao.
+        """
+        ks_ch = channel.replace('CH', 'CHANnel')
+        tk_ch = str(channel).upper().replace('CHANNEL', 'CH')
+        keys, tek = [], []
+
+        if scale is not None:
+            keys.append(f':{ks_ch}:SCALe {scale:.9g}')
+            tek.append(f'{tk_ch}:SCAle {scale:.9g}')
+        if offset is not None:
+            keys.append(f':{ks_ch}:OFFSet {offset:.9g}')
+            tek.append(f'{tk_ch}:OFFSet {offset:.9g}')
+        if position is not None:
+            tek.append(f'{tk_ch}:POSition {position:.9g}')
+            if scale is not None:
+                keys.append(f':{ks_ch}:OFFSet {-position * scale:.9g}')
+
+        if not keys and not tek:
+            return
+
+        script = self._build_script(
+            _SCPI_TEMPLATE,
+            resource = self.visa_resource,
+            commands = {'TEKTRONIX': tek, 'KEYSIGHT': keys, 'AGILENT': keys},
+        )
+        self._run_script(script)
+
     def show_channels(self, channels, total=4):
         """Exibe apenas os canais informados, desligando os demais.
 
