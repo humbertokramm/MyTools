@@ -14,6 +14,74 @@ TFTP_DIR        = r"C:\Testes\TFTP"
 TFTP_LP_RBF     = os.path.join(TFTP_DIR, "LP.rbf")
 INSTALL_LUA_BAT = os.path.join(TFTP_DIR, "install Lua.bat")
 
+PORTA_PADRAO = 8081
+
+# Cenarios de conexao, espelhando as opcoes do updateLua.ttl (pasta TFTP).
+#   servidor : IP deste PC que o equipamento enxerga -- e o que vai na URL
+#   gateway  : rota default a configurar no equipamento
+#   equip    : IPs a atribuir ao equipamento (um por slot/porta do terminal
+#              server; no caso serial so existe um)
+CENARIOS = {
+    "Serial (PC direto)": {
+        "servidor": "192.168.0.15",
+        "gateway":  "192.168.0.15",
+        "equip":    ["192.168.0.25"],
+    },
+    "Telnet LIEM": {
+        "servidor": "10.0.120.23",
+        "gateway":  "172.22.239.1",
+        "equip":    [f"172.22.239.{n}" for n in range(51, 59)],
+    },
+    "Telnet Sala 35": {
+        "servidor": "10.0.120.23",
+        "gateway":  "172.22.227.254",
+        "equip":    [f"172.22.227.{n}" for n in range(51, 59)],
+    },
+}
+
+
+def ips_locais():
+    """IPv4 configurados nesta maquina, para conferir o IP do cenario."""
+    import socket
+    ips = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except Exception:
+        pass
+    return ips
+
+
+# -------------------------------
+# servidor HTTP (reiniciavel)
+# -------------------------------
+class Servidor:
+    """Servidor HTTP que pode trocar de porta sem reiniciar o programa.
+
+    Escuta em todas as interfaces (0.0.0.0) de proposito: nos cenarios de
+    telnet o equipamento acessa pelo IP corporativo e no serial pelo IP da
+    rede direta. Amarrar num IP so obrigaria a reiniciar ao trocar de
+    cenario -- e falharia se aquela interface estivesse fora do ar. O IP que
+    vai na URL vem do cenario, nao do bind.
+    """
+
+    def __init__(self):
+        self.httpd = None
+        self.porta = None
+
+    def start(self, porta):
+        self.stop()
+        self.httpd = HTTPServer(("", porta), SimpleHTTPRequestHandler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.porta = porta
+        print(f"servidor ouvindo em 0.0.0.0:{porta}")
+
+    def stop(self):
+        if self.httpd is not None:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+            self.httpd = None
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -56,38 +124,9 @@ def executar_macro(arquivo,IP,PORT):
     subprocess.Popen([tterm, macro_path, "13", "115200"])
 
 # -------------------------------
-# servidor HTTP
-# -------------------------------
-def run_server(IP, PORT):
-    Handler = SimpleHTTPRequestHandler
-    httpd = HTTPServer((IP, PORT), Handler)
-
-    print("running server...")
-    print("IP:", IP, "| Port:", PORT)
-
-    #httpd.handle_request()
-    httpd.serve_forever()
-
-    print("server stopped...")
-    exit()
-
-
-# -------------------------------
 # GUI
 # -------------------------------
-def start_gui(IP, PORT):
-
-    BASE_LINK = f"onie-nos-install http://{IP}:{PORT}/"
-
-    def copiar_link(nome_arquivo):
-
-        link = BASE_LINK + nome_arquivo
-
-        root.clipboard_clear()
-        root.clipboard_append(link)
-        root.update()
-
-        print("Copiado:", link)
+def start_gui(servidor, cenario_ini=None, porta_ini=None):
 
     # ---------------- GUI ----------------
     root = tk.Tk()
@@ -98,9 +137,86 @@ def start_gui(IP, PORT):
     frame = tk.Frame(root)
     frame.pack(padx=10, pady=10)
 
+    # ---------------- cenario de conexao ----------------
+    nomes_cenario = list(CENARIOS)
+    cenario_var = tk.StringVar(
+        value=cenario_ini or cfg.get("cenario", nomes_cenario[0]))
+    if cenario_var.get() not in CENARIOS:
+        cenario_var.set(nomes_cenario[0])
+    slot_var  = tk.StringVar()
+    porta_var = tk.StringVar(
+        value=str(porta_ini or cfg.get("porta", PORTA_PADRAO)))
+
+    linha_cen = tk.Frame(frame)
+    linha_cen.pack(pady=(0, 4))
+    tk.Label(linha_cen, text="Conexao:").pack(side="left")
+    tk.OptionMenu(linha_cen, cenario_var, *nomes_cenario).pack(side="left")
+
+    tk.Label(linha_cen, text="Equip:").pack(side="left", padx=(8, 2))
+    slot_menu = tk.OptionMenu(linha_cen, slot_var, "")
+    slot_menu.pack(side="left")
+
+    tk.Label(linha_cen, text="Porta:").pack(side="left", padx=(8, 2))
+    tk.Entry(linha_cen, textvariable=porta_var, width=6).pack(side="left")
+    tk.Button(linha_cen, text="Aplicar",
+              command=lambda: aplicar_cenario()).pack(side="left", padx=4)
+
     # info servidor
-    info = tk.Label(frame, text=f"Servidor: http://{IP}:{PORT}")
+    info = tk.Label(frame, text="")
     info.pack(pady=(0, 10))
+
+    def cen_atual():
+        return CENARIOS[cenario_var.get()]
+
+    def ip_equip():
+        return slot_var.get() or cen_atual()["equip"][0]
+
+    def _popular_slots():
+        """Refaz a lista de IPs de equipamento do cenario selecionado."""
+        equip = cen_atual()["equip"]
+        menu = slot_menu["menu"]
+        menu.delete(0, "end")
+        for ip in equip:
+            menu.add_command(label=ip,
+                             command=lambda v=ip: (slot_var.set(v),
+                                                   atualizar_lista()))
+        if slot_var.get() not in equip:
+            slot_var.set(equip[0])
+
+    def aplicar_cenario():
+        """Aplica cenario e porta: religa o servidor e refaz os comandos."""
+        cen = cen_atual()
+        try:
+            porta = int(porta_var.get())
+        except ValueError:
+            info.config(text="Porta invalida", fg="red")
+            return
+
+        _popular_slots()
+
+        if servidor.porta != porta:
+            try:
+                servidor.start(porta)
+            except OSError as e:
+                info.config(text=f"Nao foi possivel abrir a porta {porta}: {e}",
+                            fg="red")
+                return
+
+        # Avisa se o IP do cenario nao existe nesta maquina -- costuma ser
+        # cabo fora, VPN caida ou IP trocado pelo DHCP.
+        ip = cen["servidor"]
+        if ip in ips_locais():
+            info.config(text=f"Servidor: http://{ip}:{porta}", fg="green")
+        else:
+            info.config(text=f"Servidor: http://{ip}:{porta}  "
+                             f"(IP nao encontrado nesta maquina)", fg="red")
+
+        cfg["cenario"] = cenario_var.get()
+        cfg["porta"] = porta
+        save_config(cfg)
+        atualizar_lista()
+
+    cenario_var.trace_add("write", lambda *_: aplicar_cenario())
 
     # ---------------- configuração firmware ----------------
     tipo_var = tk.StringVar(value=cfg.get("tipo", "FT"))
@@ -283,10 +399,14 @@ def start_gui(IP, PORT):
                 root.update()
                 print("Copiado:", texto)
 
-            # comandos
-            cmd_rescue = "onie_rescue_bootcmd"
-            cmd_ifconfig = f"ifconfig eth0 192.168.0.25 netmask 255.255.255.0 up"
-            cmd_install = BASE_LINK + arquivo
+            # comandos, montados a partir do cenario selecionado
+            cen = cen_atual()
+            cmd_rescue   = "onie_rescue_bootcmd"
+            cmd_ifconfig = (f"ifconfig eth0 {ip_equip()} "
+                            f"netmask 255.255.255.0 up")
+            cmd_route    = f"ip route add default via {cen['gateway']}"
+            cmd_install  = (f"onie-nos-install "
+                            f"http://{cen['servidor']}:{servidor.porta}/{arquivo}")
 
             # função helper pra linha
             def criar_linha(texto, is_install=False):
@@ -312,47 +432,48 @@ def start_gui(IP, PORT):
                     tk.Button(
                         linha,
                         text="Auto (TeraTerm)",
-                        command=lambda: executar_macro("latest.bin",host,porta)
+                        command=lambda: executar_macro(
+                            "latest.bin", cen_atual()["servidor"], servidor.porta)
                     ).pack(side="left", padx=5)
 
-            # cria as 3 linhas
+            # cria as linhas do procedimento, na ordem de execucao
             criar_linha(cmd_rescue)
             criar_linha(cmd_ifconfig)
+            criar_linha(cmd_route)
             criar_linha(cmd_install, is_install=True)
 
-    # inicializa lista
-    atualizar_lista()
+    # inicializa cenario, servidor e lista
+    aplicar_cenario()
 
     root.mainloop()
+    servidor.stop()
 
 
 # -------------------------------
 # MAIN
 # -------------------------------
-class Error(Exception):
-    pass
+# O cenario e a porta sao escolhidos na janela e ficam salvos no config, por
+# isso nao ha mais argumento obrigatorio. Opcionalmente da para abrir ja num
+# cenario/porta:  python http_server.py "Telnet LIEM" 80
+if __name__ == "__main__":
+    cenario_ini = sys.argv[1] if len(sys.argv) > 1 else None
+    porta_ini = None
+    if len(sys.argv) > 2:
+        try:
+            porta_ini = int(sys.argv[2])
+        except ValueError:
+            print("Valor da porta deve ser numero.")
+            sys.exit(1)
 
+    if cenario_ini is not None and cenario_ini not in CENARIOS:
+        print(f'Cenario desconhecido: "{cenario_ini}"')
+        print("Disponiveis: " + " | ".join(CENARIOS))
+        sys.exit(1)
 
-try:
-    if len(sys.argv) == 3:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))  # serve a pasta HTTP
 
-        host = sys.argv[1]
-        porta = int(sys.argv[2])
-
-        threading.Thread(
-            target=run_server,
-            args=(host, porta),
-            daemon=True
-        ).start()
-
-        start_gui(host, porta)
-
-    else:
-        raise Error
-
-except Error:
-    print(f"Uso: python {sys.argv[0]} <ip> <porta>")
-    print(f"Ex: python {sys.argv[0]} 192.168.0.15 8081")
-
-except ValueError:
-    print("Valor da porta deve ser número.")
+    servidor = Servidor()
+    try:
+        start_gui(servidor, cenario_ini, porta_ini)
+    finally:
+        servidor.stop()
