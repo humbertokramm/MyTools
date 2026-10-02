@@ -80,6 +80,27 @@ from engMath import *
 from pulse_mask import G703Clock2048kHz, G703Data2048kbits
 
 
+def faixas_pct(pct):
+	"""Normaliza a tolerancia de fonte para uma lista de (lo_pct, hi_pct).
+
+	    1            -> [(-1, 1)]            uma faixa simetrica
+	    (-3, 5)      -> [(-3, 5)]            uma faixa assimetrica  (TUPLA)
+	    [1, 5]       -> [(-1,1), (-5,5)]     duas faixas            (LISTA)
+	    [(-1,1), 5]  -> [(-1,1), (-5,5)]     mistura
+
+	A distincao tupla/lista e o que separa "uma faixa assimetrica" de "varias
+	faixas": (-3, 5) e um intervalo, [3, 5] sao duas tolerancias.
+	"""
+	itens = pct if isinstance(pct, list) else [pct]
+	out = []
+	for it in itens:
+		if isinstance(it, (list, tuple)):
+			out.append((it[0], it[1]))
+		else:
+			out.append((-abs(it), abs(it)))
+	return out
+
+
 class CsvScope:
 	"""
 	Classe para processamento e visualização de dados de osciloscópios e instrumentos de medição.
@@ -1170,6 +1191,29 @@ class CsvScope:
 				_rotula(self.Limits['logicLimits']["low_max"], 'ViL', ln.get_color())
 				ln = ax.axhline(self.Limits['logicLimits']["high_min"], linestyle='--', linewidth=0.8)
 				_rotula(self.Limits['logicLimits']["high_min"], 'ViH', ln.get_color())
+
+		# =============================
+		# Power rail: nominal +- tolerancia
+		# =============================
+		# Semantica inversa a dos limites logicos: aqui a faixa sombreada e a
+		# regiao ACEITAVEL, e o que sai dela e falha. Nos logicos as faixas
+		# sao os niveis validos e o meio e a zona proibida.
+		if self.Limits.get('powerLimits'):
+			p = self.Limits['powerLimits']
+			nom = p['nominal']
+			# Cor fixa (e nao a do ciclo) para que varias faixas fiquem no
+			# mesmo tom: a sobreposicao escurece sozinha o miolo, e a faixa
+			# mais apertada fica naturalmente mais destacada.
+			for lo_pct, hi_pct in faixas_pct(p.get('pct', 0)):
+				lo = nom * (1 + lo_pct / 100.0)
+				hi = nom * (1 + hi_pct / 100.0)
+				ax.axhspan(lo, hi, alpha=0.13, color='C0')
+				ax.axhline(lo, linestyle='--', linewidth=0.8, color='C0')
+				_rotula(lo, f'{lo_pct:+g}%', 'C0')
+				ax.axhline(hi, linestyle='--', linewidth=0.8, color='C0')
+				_rotula(hi, f'{hi_pct:+g}%', 'C0')
+			ax.axhline(nom, linestyle=':', linewidth=0.8, color='gray')
+			_rotula(nom, 'nom', 'gray')
 
 		# Max limits (independent)
 		if 'maxLimits' in self.Limits:

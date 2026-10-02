@@ -155,6 +155,47 @@ limites = {
         }
     },
 }
+def getPower(nominal, pct=1, maxLimits=None):
+    """Limites de uma fonte: tensao nominal +- tolerancia percentual.
+
+    Analise diferente da de nivel logico -- aqui a faixa sombreada no grafico
+    e a regiao aceitavel, e o que sai dela e falha.
+
+    Args:
+        nominal (float): tensao nominal do trilho, ex ``12.0``.
+        pct: tolerancia em PORCENTO (nao fracao: ``1`` = 1%). Numero para
+            simetrica, TUPLA para assimetrica, LISTA para varias faixas
+            concentricas.
+        maxLimits (seq): limites absolutos opcionais, em volts.
+
+    Returns:
+        dict: pronto para ``CsvScope.Limits``.
+
+    Exemplo:
+        CS.Limits = getPower(12.0, 1)          # 12V +-1%  -> 11.88 a 12.12
+        CS.Limits = getPower(3.3, (-3, 5))     # 3.3V -3%/+5%, uma faixa
+        CS.Limits = getPower(12.0, [1, 5])     # duas faixas: +-1% e +-5%
+
+    Note:
+        Tupla e lista significam coisas diferentes: ``(-3, 5)`` e UMA faixa
+        de -3% a +5%; ``[3, 5]`` sao DUAS faixas, +-3% e +-5%.
+        O ``threshold`` devolvido usa a primeira faixa, tomada como a
+        especificacao principal.
+    """
+    from csvscope import faixas_pct
+    lo_pct, hi_pct = faixas_pct(pct)[0]
+    values = {
+        "powerLimits": {"nominal": nominal, "pct": pct},
+        "threshold": {
+            "lower": nominal * (1 + lo_pct / 100.0),
+            "upper": nominal * (1 + hi_pct / 100.0),
+        },
+    }
+    if maxLimits is not None:
+        values["maxLimits"] = {"low": maxLimits[0], "high": maxLimits[1]}
+    return values
+
+
 def _parse_vcc(vcc):
     """Aceita 3.3 ou a notacao usada nas chaves: '3V3', '1V8', '5V'."""
     if isinstance(vcc, str):
