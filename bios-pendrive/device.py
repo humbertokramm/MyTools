@@ -328,6 +328,28 @@ class Device:
             missing.append("busybox tftp")
         return missing
 
+    def setup_network(self, ip, iface="eth0", netmask="255.255.255.0"):
+        """Sobe a interface de rede do equipamento.
+
+        Necessario na conexao serial: enquanto a interface do equipamento
+        esta down, o PHY nao negocia e a placa do PC fica sem link -- o
+        Windows mostra "cabo desconectado" e o IP daquela placa nem aparece
+        na lista de IPs locais, entao nao ha como escolher o IP do TFTP.
+        Subir a interface aqui e o que torna a rede do PC utilizavel.
+
+        Em telnet/SSH isso nao se aplica: a rede ja esta de pe, senao a
+        propria conexao nao existiria.
+        """
+        self.log(f"Subindo {iface} do equipamento em {ip}...")
+        self.sh(f"ifconfig {shlex.quote(iface)} {shlex.quote(ip)} "
+                f"netmask {shlex.quote(netmask)} up", check=False)
+        out = self.sh(f"ip -4 -o addr show dev {shlex.quote(iface)}", check=False)
+        if ip in out:
+            self.log(f"{iface} com {ip}")
+            return True
+        self.log(f"AVISO: {iface} nao assumiu {ip}. Saida: {out.strip() or '(vazia)'}")
+        return False
+
     def ping(self, ip):
         return self.t.run(f"ping -c 1 -W 2 {shlex.quote(ip)} >/dev/null 2>&1", 10)[0] == 0
 

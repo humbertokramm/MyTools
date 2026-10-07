@@ -24,6 +24,10 @@ from tftpserver import TftpServer, TftpError
 APP_NAME = "BIOS Pendrive"
 VERSION = "1.0.0"
 
+# IP configurado na interface do equipamento na ligacao ponto a ponto por
+# serial. Mesmo valor usado nas macros do TeraTerm e no http_server.
+EQUIP_IP_PADRAO = "192.168.0.25"
+
 
 def app_dir():
     if getattr(sys, "frozen", False):
@@ -57,6 +61,26 @@ def local_ipv4s():
             if not ip.startswith("127."):
                 res.append((ip, ""))
     return res
+
+
+def wait_local_ip(ip, timeout=25, log=print):
+    """Espera um IP aparecer nas interfaces do PC.
+
+    Depois que a interface do equipamento sobe, a placa do PC ainda leva
+    alguns segundos para negociar o link e o Windows reativar o IP.
+    """
+    fim = time.monotonic() + timeout
+    while time.monotonic() < fim:
+        if any(a == ip for a, _ in local_ipv4s()):
+            return True
+        time.sleep(1)
+    return False
+
+
+def ip_same_subnet(ref):
+    """IP local no mesmo /24 de *ref*, ou None."""
+    pre = ref.rsplit(".", 1)[0] + "."
+    return next((a for a, _ in local_ipv4s() if a.startswith(pre)), None)
 
 
 def route_ip_to(host):
@@ -124,8 +148,13 @@ def file_logger(log):
 # Procedimento (compartilhado entre GUI e CLI)
 # =========================================================================
 def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layout="mbr",
-            blksize=1468, log=print, progress=None, confirm=None):
-    """job: 'info', 'backup' ou 'write'. confirm(texto) -> bool antes de formatar."""
+            blksize=1468, log=print, progress=None, confirm=None,
+            equip_ip=EQUIP_IP_PADRAO, equip_iface="eth0"):
+    """job: 'info', 'backup' ou 'write'. confirm(texto) -> bool antes de formatar.
+
+    equip_ip: na conexao serial, IP a configurar na interface do equipamento
+        antes do TFTP. None pula esse passo.
+    """
     progress = progress or (lambda d, t: None)
     t = device.connect(kind, target, user, password, log)
     dev = device.Device(t, log)
@@ -135,6 +164,23 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
         missing = dev.check_tools()
         if missing:
             raise device.DeviceError("faltam ferramentas no equipamento: " + ", ".join(missing))
+
+        # Serial: a rede do equipamento ainda nao subiu, entao a placa do PC
+        # esta sem link e o IP dela nao aparece em local_ipv4s(). Sobe a
+        # interface do equipamento e so entao resolve o IP do TFTP.
+        if kind == "serial" and equip_ip:
+            dev.setup_network(equip_ip, iface=equip_iface)
+            alvo = tftp_ip or ip_same_subnet(equip_ip)
+            if alvo:
+                if wait_local_ip(alvo, 25, log):
+                    tftp_ip = alvo
+                    log(f"Rede do PC disponivel em {tftp_ip}")
+                else:
+                    log(f"AVISO: {alvo} nao apareceu nas interfaces do PC em 25 s. "
+                        f"Confira o cabo na segunda placa de rede.")
+            else:
+                log(f"AVISO: nenhum IP do PC na faixa de {equip_ip}. "
+                    f"Configure a segunda placa de rede nessa sub-rede.")
 
         disks = dev.usb_disks()
         if not disks:
@@ -487,6 +533,11 @@ def run_cli(argv):
     p.add_argument("--user", default="root")
     p.add_argument("--password", default="root")
     p.add_argument("--tftp-ip", help="IP deste PC que o equipamento usa (padrão: rota até o host)")
+    p.add_argument("--equip-ip", default=EQUIP_IP_PADRAO,
+                   help=f"na serial, IP a subir na eth do equipamento antes do TFTP "
+                        f"(padrão: {EQUIP_IP_PADRAO}); 'none' pula esse passo")
+    p.add_argument("--equip-iface", default="eth0",
+                   help="interface do equipamento a subir (padrão: eth0)")
     p.add_argument("--dir", default=DEFAULT_DIR, help="pasta local dos arquivos")
     p.add_argument("--disk", help="ex.: /dev/sda (se houver mais de um pendrive)")
     p.add_argument("--layout", choices=["mbr", "floppy"], default="mbr")
@@ -516,8 +567,10 @@ def run_cli(argv):
         return input("Digite SIM para continuar: ").strip().upper() == "SIM"
 
     try:
+        eq_ip = None if str(a.equip_ip).lower() in ("none", "") else a.equip_ip
         r = run_job(a.job, kind, target, a.user, a.password, ip, a.dir, disk=a.disk,
-                    layout=a.layout, blksize=a.blksize, log=log, progress=prog, confirm=confirm)
+                    layout=a.layout, blksize=a.blksize, log=log, progress=prog, confirm=confirm,
+                    equip_ip=eq_ip, equip_iface=a.equip_iface)
         return 0 if r is not None else 1
     except (device.DeviceError, TftpError, OSError) as e:
         log(f"ERRO: {e}")
