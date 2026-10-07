@@ -140,6 +140,8 @@ class TektronixScope:
     # ---------------------------------------------------------
     def capture_screen(self):
 
+        self.acquisition_fresh()   # so avisa; nao impede a captura
+
         self._write("HARDCopy:FORMat PNG")
         self.inst.write("HARDCopy STARt")  # produz dados — não pode usar _write em modo debug
 
@@ -153,17 +155,41 @@ class TektronixScope:
         return data
 
     # ---------------------------------------------------------
+    def acquisition_fresh(self):
+        """Avisa se a tela esta exibindo uma aquisicao antiga.
+
+        O carimbo de hora no canto da tela e o instante da aquisicao em
+        exibicao, nao a leitura do relogio. Com ACQuire:NUMACq em 0 nenhuma
+        aquisicao nova ocorreu desde o ultimo start: a tela (e o print dela)
+        mostra a forma de onda anterior, com a hora anterior.
+
+        Acontece quando se captura sem confirmar o trigger -- armando com
+        single() em modo NORMal e fotografando antes da borda chegar. Varias
+        capturas seguidas saem iguais, com a mesma hora, e nada no SCPI
+        reclama. Daí a conferencia aqui.
+
+        Returns:
+            bool: True se ha aquisicao nova em tela.
+        """
+        try:
+            n = int(self.inst.query('ACQuire:NUMACq?').strip())
+        except Exception:
+            return True          # sem leitura confiavel, nao atrapalha
+        if n == 0:
+            print("AVISO: nenhuma aquisicao nova (ACQuire:NUMACq=0). A tela "
+                  "mostra a forma de onda anterior e a hora dela -- o trigger "
+                  "nao ocorreu. Use wait_single() antes de capturar.")
+            return False
+        return True
+
     def set_channel_settings(self, channel, info):
         delay = 0.2
         ch = channel.replace("CH", "")
+
         now = datetime.now()
-        data_formatada = now.strftime("%Y-%m-%d")
-        hora_formatada = now.strftime("%H:%M:%S")
-
-
-        self._write(f':DATE "{data_formatada}"')
+        self._write(f':DATE "{now.strftime("%Y-%m-%d")}"')
         time.sleep(delay)
-        self._write(f':TIME "{hora_formatada}"')
+        self._write(f':TIME "{now.strftime("%H:%M:%S")}"')
         time.sleep(delay)
 
 
