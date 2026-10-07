@@ -301,6 +301,9 @@ class Device:
     def __init__(self, transport, log=None):
         self.t = transport
         self.log = log or print
+        # Ponto de montagem em uso. Pode mudar: se o equipamento ja montou o
+        # pendrive sozinho, trabalhamos onde ele colocou.
+        self.mp = MOUNT_POINT
 
     def sh(self, cmd, timeout=60, check=True):
         rc, out = self.t.run(cmd, timeout)
@@ -378,8 +381,29 @@ class Device:
         return f"{d['dev']}  {d['model']}  {human(d['size'])}"
 
     # ------------------------------------------------------------ montagem
-    def umount_all(self, dev):
-        self.sh(f"for m in $(grep '^{dev}' /proc/mounts | cut -d' ' -f2); do umount \"$m\" || umount -l \"$m\"; done; true")
+    def umount_all(self, dev, tentativas=3):
+        """Desmonta tudo que vier de *dev* e confirma que saiu.
+
+        O umount termina com '; true' para nao abortar quando nao ha nada
+        montado -- mas isso tambem engole a falha quando o desmonte nao
+        funciona. Sem conferir, o sfdisk adiante recusa com "disk is
+        currently in use" e so ali o problema aparece. Repete algumas vezes
+        porque automount costuma remontar logo apos o umount.
+
+        Returns:
+            list[str]: montagens que sobraram (vazio = limpo).
+        """
+        restante = []
+        for _ in range(tentativas):
+            self.sh(f"for m in $(grep '^{dev}' /proc/mounts | cut -d' ' -f2); do "
+                    f"umount \"$m\" || umount -l \"$m\"; done; true")
+            self.sh("sync; true", timeout=60)
+            restante = [l for l in self.sh(
+                f"grep '^{dev}' /proc/mounts | cut -d' ' -f1,2; true").splitlines() if l.strip()]
+            if not restante:
+                return []
+            time.sleep(1)
+        return restante
 
     def _fs_device(self, dev):
         """Primeira partição com sistema de arquivos; senão o disco inteiro."""
@@ -391,26 +415,125 @@ class Device:
                 return cand, t
         raise DeviceError(f"nenhum sistema de arquivos reconhecido em {dev}")
 
+    def _liberar(self, dev):
+        """Desmonta o disco e tambem o ponto de montagem.
+
+        Sao coisas distintas: o umount_all so olha o que vem de *dev*, mas o
+        ponto de montagem pode ter sobrado de uma execucao interrompida, ou
+        ter outra origem montada em cima. Os dois precisam estar livres.
+
+        Returns:
+            list[str]: montagens do disco que sobraram.
+        """
+        self.sh("cd / ; true")      # ver _sair_do_ponto()
+        self.sh(f"umount {self.mp} 2>/dev/null || "
+                f"umount -l {self.mp} 2>/dev/null; true")
+        return self.umount_all(dev)
+
+    def _mountpoint_de(self, src):
+        """Onde *src* ja esta montado, ou None."""
+        out = self.sh(f"grep '^{src} ' /proc/mounts | cut -d' ' -f2 | head -1; true")
+        return out.strip() or None
+
     def mount(self, dev, ro):
-        self.umount_all(dev)
+        """Deixa o pendrive montado e devolve o dispositivo de origem.
+
+        Se o equipamento ja montou sozinho (automount), usa o ponto dele em
+        vez de desmontar e remontar: logo depois do mkdosfs o automount pega
+        a particao nova em menos de um segundo, e qualquer tentativa de
+        tomar o ponto perde essa corrida -- era a falha
+        "already mounted or mount point busy" que se repetia mesmo com
+        retentativa.
+        """
         src, fstype = self._fs_device(dev)
-        self.sh(f"mkdir -p {MOUNT_POINT}")
-        self.sh(f"mount {'-o ro' if ro else ''} {src} {MOUNT_POINT}")
-        self.log(f"Montado {src} ({fstype}) em {MOUNT_POINT} {'(somente leitura)' if ro else ''}")
-        return src
+
+        ja = self._mountpoint_de(src)
+        if ja:
+            self.mp = ja
+            self.log(f"{src} ({fstype}) ja montado em {ja}; usando esse ponto")
+            if not ro:
+                self.sh(f"mount -o remount,rw {ja} 2>/dev/null; true")
+            return src
+
+        self.mp = MOUNT_POINT
+        self._liberar(dev)
+        self.sh(f"mkdir -p {self.mp}")
+
+        opt = "-o ro " if ro else ""
+        # Tipo explicito: o blkid ja identificou, e sem -t o mount testa cada
+        # fs de /proc/filesystems ate esgotar.
+        cmds = ([f"mount -t {fstype} {opt}{src} {self.mp}"] if fstype else [])
+        cmds.append(f"mount {opt}{src} {self.mp}")
+
+        # Com nada montado e o fs valido, o "already mounted or mount point
+        # busy" e EBUSY: logo apos o mkdosfs o udev abre o dispositivo para
+        # sondar o sistema de arquivos recem-criado, e montar nessa janela e
+        # recusado. E transitorio -- esperar o udev assentar resolve.
+        out = ""
+        for tentativa in range(1, 6):
+            for cmd in cmds:
+                rc, out = self.t.run(cmd, 60)
+                if rc == 0:
+                    self.log(f"Montado {src} ({fstype}) em {self.mp} "
+                             f"{'(somente leitura)' if ro else ''}")
+                    return src
+            if tentativa == 1:
+                self.sh("udevadm settle 2>/dev/null; true", timeout=60)
+            else:
+                time.sleep(2)
+            self.log(f"{src} ocupado; aguardando o kernel liberar "
+                     f"(tentativa {tentativa}/5)...")
+
+        fs_sup = self.sh("cat /proc/filesystems; true").strip()
+        blk = self.sh(f"blkid {src} 2>&1; true").strip()
+        quem = self.sh(f"fuser -vm {src} 2>&1 || lsof {src} 2>&1; true").strip()
+        raise DeviceError(
+            f"falha ao montar {src} ({fstype or 'tipo desconhecido'}) em "
+            f"{self.mp}: {out.strip()}\n"
+            f"--- quem esta com {src} aberto ---\n{quem or '(nada)'}\n"
+            f"--- blkid ---\n{blk}\n"
+            f"--- /proc/filesystems ---\n{fs_sup}")
 
     def umount(self):
-        self.sh(f"sync; umount {MOUNT_POINT} 2>/dev/null; true", timeout=120)
+        # O 'cd /' nao e cosmetico: a sessao do transporte e um shell unico e
+        # persistente, entao um 'cd' feito por qualquer comando anterior vale
+        # para os seguintes. Com o cwd dentro do ponto de montagem, o kernel
+        # mantem o dispositivo ocupado e a montagem seguinte toma EBUSY --
+        # "already mounted or mount point busy" mesmo sem nada montado. Por
+        # isso os comandos que entram no ponto usam subshell: (cd X && ...).
+        self.sh(f"cd / ; sync; umount {self.mp} 2>/dev/null; true", timeout=120)
 
     def remote_md5s(self):
         """{rel: md5} dos arquivos em MOUNT_POINT."""
-        out = self.sh(f"cd {MOUNT_POINT} && find . -type f -exec md5sum {{}} +", timeout=600)
+        out = self.sh(f"(cd {self.mp} && find . -type f -exec md5sum {{}} +)",
+                      timeout=600)
         res = {}
         for line in out.splitlines():
             m = re.match(r"^([0-9a-f]{32})\s+\./(.+)$", line.strip())
             if m:
                 res[m.group(2)] = m.group(1)
         return res
+
+    def list_files(self, dev):
+        """[(rel, tamanho)] dos arquivos do pendrive, sem alterar nada.
+
+        Monta somente leitura e desmonta ao final, para poder conferir o
+        conteudo antes de copiar ou gravar.
+        """
+        self.mount(dev, ro=True)
+        try:
+            out = self.sh(
+                f"(cd {self.mp} && find . -type f | while read -r f; do "
+                f"echo \"$(wc -c < \"$f\" | tr -d ' ')|$f\"; done)", timeout=120)
+        finally:
+            self.umount()
+        items = []
+        for line in out.splitlines():
+            size, _, rel = line.strip().partition("|")
+            rel = rel[2:] if rel.startswith("./") else rel
+            if rel and size.isdigit():
+                items.append((rel, int(size)))
+        return sorted(items)
 
     # ------------------------------------------------- passo 1: pendrive -> PC
     def backup(self, dev, tftp_ip, local_dir, skip=None, blksize=1468, progress=None):
@@ -420,8 +543,8 @@ class Device:
         self.mount(dev, ro=True)
         try:
             files = self.sh(
-                f"cd {MOUNT_POINT} && find . -type f | while read -r f; do "
-                f"echo \"$(wc -c < \"$f\" | tr -d ' ')|$f\"; done", timeout=120)
+                f"(cd {self.mp} && find . -type f | while read -r f; do "
+                f"echo \"$(wc -c < \"$f\" | tr -d ' ')|$f\"; done)", timeout=120)
             items = []
             for line in files.splitlines():
                 size, _, rel = line.strip().partition("|")
@@ -439,7 +562,7 @@ class Device:
             done = 0
             for rel, size in items:
                 self.log(f"  -> {rel} ({human(size)})")
-                self.sh(f"busybox tftp -p -b {blksize} -l {shlex.quote(MOUNT_POINT + '/' + rel)} "
+                self.sh(f"busybox tftp -p -b {blksize} -l {shlex.quote(self.mp + '/' + rel)} "
                         f"-r {shlex.quote(rel)} {tftp_ip}", timeout=max(120, size // 50000))
                 local = os.path.join(local_dir, *rel.split("/"))
                 got = md5_file(local)
@@ -456,14 +579,25 @@ class Device:
     def format_disk(self, dev, layout="mbr", label="BIOS"):
         """layout 'mbr': MBR + 1 partição FAT32. 'floppy': FAT32 no disco inteiro."""
         n = dev.rsplit("/", 1)[1]
-        self.umount_all(dev)
+        restante = self._liberar(dev)
+        if restante:
+            raise DeviceError(
+                f"{dev} continua montado: " + "; ".join(restante) +
+                "\nAlgum processo no equipamento esta usando o pendrive "
+                "(automount, shell aberto na pasta). Desmonte e tente de novo.")
         self.log(f"Apagando início e fim de {dev}...")
         self.sh(f"dd if=/dev/zero of={dev} bs=1M count=8 conv=fsync 2>/dev/null", timeout=120)
         self.sh(f"S=$(cat /sys/block/{n}/size); dd if=/dev/zero of={dev} bs=512 "
                 f"seek=$((S-8192)) count=8192 conv=fsync 2>/dev/null", timeout=120)
         if layout == "mbr":
             self.log("Criando tabela MBR com uma partição FAT32 (tipo 0x0c)...")
-            self.sh(f"printf 'label: dos\\n2048,,c,*\\n' | sfdisk --wipe always {dev}", timeout=60)
+            # --no-reread: o umount_all acima ja confirmou que nada esta
+            # montado, e a releitura e feita logo abaixo com blockdev. Sem
+            # isso o sfdisk reabre o disco so para checar e, com o kernel
+            # ainda segurando a particao antiga recem-apagada pelo dd,
+            # recusa com "disk is currently in use".
+            self.sh(f"printf 'label: dos\\n2048,,c,*\\n' | "
+                    f"sfdisk --wipe always --no-reread {dev}", timeout=60)
             self.sh(f"blockdev --rereadpt {dev} 2>/dev/null || partprobe {dev} 2>/dev/null; true")
             part = f"{dev}1"
             self.sh(f"i=0; while [ ! -b {part} ] && [ $i -lt 50 ]; do usleep 200000; i=$((i+1)); done; "
@@ -473,6 +607,10 @@ class Device:
         self.log(f"Formatando {part} em FAT32 (rótulo {label})...")
         self.sh(f"mkdosfs -n {shlex.quote(label)} {part}", timeout=300)
         self.sh("sync", timeout=60)
+        # Deixa o udev terminar de sondar o fs recem-criado antes de devolver:
+        # enquanto ele mantem o dispositivo aberto, a montagem seguinte toma
+        # EBUSY ("already mounted or mount point busy").
+        self.sh("udevadm settle 2>/dev/null; true", timeout=60)
         return part
 
     def write(self, dev, tftp_ip, local_dir, layout="mbr", blksize=1468, progress=None):
@@ -490,7 +628,7 @@ class Device:
             done = 0
             for rel, _, size in files:
                 self.log(f"  <- {rel} ({human(size)})")
-                dst = MOUNT_POINT + "/" + rel
+                dst = self.mp + "/" + rel
                 if "/" in rel:
                     self.sh(f"mkdir -p {shlex.quote(dst.rsplit('/', 1)[0])}")
                 self.sh(f"busybox tftp -g -b {blksize} -l {shlex.quote(dst)} -r {shlex.quote(rel)} {tftp_ip}",
