@@ -63,24 +63,32 @@ def local_ipv4s():
     return res
 
 
-def wait_local_ip(ip, timeout=25, log=print):
-    """Espera um IP aparecer nas interfaces do PC.
-
-    Depois que a interface do equipamento sobe, a placa do PC ainda leva
-    alguns segundos para negociar o link e o Windows reativar o IP.
-    """
-    fim = time.monotonic() + timeout
-    while time.monotonic() < fim:
-        if any(a == ip for a, _ in local_ipv4s()):
-            return True
-        time.sleep(1)
-    return False
-
-
 def ip_same_subnet(ref):
     """IP local no mesmo /24 de *ref*, ou None."""
     pre = ref.rsplit(".", 1)[0] + "."
     return next((a for a, _ in local_ipv4s() if a.startswith(pre)), None)
+
+
+def wait_pc_ip(equip_ip, preferido=None, timeout=25):
+    """Espera a placa do PC ficar utilizavel e devolve o IP dela.
+
+    Precisa ser em laco: depois que a interface do equipamento sobe, o PHY
+    ainda negocia e o Windows leva alguns segundos para reativar o IP. Uma
+    consulta unica logo apos o ifconfig quase sempre devolve nada.
+
+    Returns:
+        str or None: o IP local a usar no TFTP.
+    """
+    fim = time.monotonic() + timeout
+    while True:
+        if preferido and any(a == preferido for a, _ in local_ipv4s()):
+            return preferido
+        achado = ip_same_subnet(equip_ip)
+        if achado:
+            return achado
+        if time.monotonic() >= fim:
+            return None
+        time.sleep(1)
 
 
 def route_ip_to(host):
@@ -170,17 +178,18 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
         # interface do equipamento e so entao resolve o IP do TFTP.
         if kind == "serial" and equip_ip:
             dev.setup_network(equip_ip, iface=equip_iface)
-            alvo = tftp_ip or ip_same_subnet(equip_ip)
-            if alvo:
-                if wait_local_ip(alvo, 25, log):
-                    tftp_ip = alvo
-                    log(f"Rede do PC disponivel em {tftp_ip}")
+            achado = wait_pc_ip(equip_ip, preferido=tftp_ip)
+            if achado:
+                if achado != tftp_ip:
+                    log(f"Rede do PC disponivel em {achado} (selecionado "
+                        f"automaticamente na faixa de {equip_ip})")
                 else:
-                    log(f"AVISO: {alvo} nao apareceu nas interfaces do PC em 25 s. "
-                        f"Confira o cabo na segunda placa de rede.")
+                    log(f"Rede do PC disponivel em {achado}")
+                tftp_ip = achado
             else:
-                log(f"AVISO: nenhum IP do PC na faixa de {equip_ip}. "
-                    f"Configure a segunda placa de rede nessa sub-rede.")
+                log(f"AVISO: nenhuma placa do PC subiu na faixa de {equip_ip} "
+                    f"em 25 s. Confira o cabo na segunda placa de rede e se "
+                    f"ela esta configurada nessa sub-rede.")
 
         disks = dev.usb_disks()
         if not disks:
@@ -197,8 +206,6 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
         if job == "info":
             return disks
 
-        if not tftp_ip:
-            raise device.DeviceError("selecione o IP do PC para o TFTP")
         if not disks:
             raise device.DeviceError("conecte um pendrive no equipamento")
         if disk:
@@ -209,6 +216,21 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
             sel = disks[0]
         else:
             raise device.DeviceError("mais de um pendrive conectado; escolha qual usar")
+
+        # Listar so le o pendrive; nao envolve TFTP nem rede.
+        if job == "list":
+            arquivos = dev.list_files(sel["dev"])
+            if not arquivos:
+                log("Pendrive vazio (nenhum arquivo).")
+            else:
+                total = sum(s for _, s in arquivos)
+                log(f"{len(arquivos)} arquivos, {device.human(total)}:")
+                for rel, size in arquivos:
+                    log(f"  {device.human(size):>10}  {rel}")
+            return arquivos
+
+        if not tftp_ip:
+            raise device.DeviceError("selecione o IP do PC para o TFTP")
 
         os.makedirs(folder, exist_ok=True)
         with TftpServer(folder, tftp_ip, log=log, allow_write=(job == "backup")) as srv:
@@ -323,12 +345,13 @@ def run_gui():
     fb = ttk.Frame(main)
     fb.grid(row=2, column=0, sticky="ew")
     b_test = ttk.Button(fb, text="Testar conexão")
+    b_list = ttk.Button(fb, text="Listar arquivos")
     b_backup = ttk.Button(fb, text="1) Copiar pendrive → PC")
     b_write = ttk.Button(fb, text="2) Gravar PC → pendrive")
     b_fw = ttk.Button(fb, text="Liberar no Firewall")
-    for i, b in enumerate((b_test, b_backup, b_write, b_fw)):
+    for i, b in enumerate((b_test, b_list, b_backup, b_write, b_fw)):
         b.grid(row=0, column=i, padx=4, pady=4, sticky="w")
-    buttons = (b_test, b_backup, b_write)
+    buttons = (b_test, b_list, b_backup, b_write)
 
     pb = ttk.Progressbar(main, mode="determinate", maximum=1000)
     pb.grid(row=3, column=0, sticky="ew", pady=4)
@@ -351,6 +374,7 @@ def run_gui():
         return {"ssh": ssh_host.get(), "telnet": tel_host.get()}.get(kind.get())
 
     def refresh_ips(prefer=None):
+        atual = ip_map.get(tftp_ip.get())     # preserva a escolha do usuario
         ips = local_ipv4s()
         ip_map.clear()
         labels = []
@@ -359,7 +383,8 @@ def run_gui():
             ip_map[lab] = ip
             labels.append(lab)
         ip_cb["values"] = labels
-        want = prefer or cfg.get("tftp_ip") or (route_ip_to(target_host()) if target_host() else None)
+        want = (prefer or atual or cfg.get("tftp_ip")
+                or (route_ip_to(target_host()) if target_host() else None))
         pick = next((lab for lab in labels if ip_map[lab] == want), labels[0] if labels else "")
         tftp_ip.set(pick)
 
@@ -371,7 +396,11 @@ def run_gui():
 
     refresh_ips()
     refresh_coms()
-    ip_cb.bind("<Button-1>", lambda e: None if ip_cb["values"] else refresh_ips())
+    # postcommand (e nao bind so-quando-vazio): a segunda placa de rede entra
+    # e sai conforme o equipamento sobe ou derruba a eth dele, entao a lista
+    # precisa ser relida toda vez que o combo e aberto -- como ja e feito com
+    # as portas COM.
+    ip_cb.configure(postcommand=refresh_ips)
     com_cb.configure(postcommand=refresh_coms)
 
     disk_map = {}
@@ -422,7 +451,8 @@ def run_gui():
         for b in buttons:
             b.state(["disabled"])
         pb["value"] = 0
-        status.set({"info": "Testando...", "backup": "Copiando pendrive → PC...",
+        status.set({"info": "Testando...", "list": "Lendo pendrive...",
+                    "backup": "Copiando pendrive → PC...",
                     "write": "Gravando pendrive..."}[job])
         t0 = time.monotonic()
 
@@ -437,6 +467,9 @@ def run_gui():
                 if job == "info":
                     q.put(("disks", r))
                     q.put(("done", "Conexão OK."))
+                elif job == "list":
+                    q.put(("done", f"{len(r)} arquivos no pendrive."
+                                   if r else "Pendrive vazio."))
                 elif r is None:
                     q.put(("done", "Cancelado."))
                 else:
@@ -481,6 +514,14 @@ def run_gui():
                     busy["on"] = False
                     for b in buttons:
                         b.state(["!disabled"])
+                    # Na serial a placa do PC so ganha link depois que o job
+                    # sobe a interface do equipamento -- antes disso o IP dela
+                    # nem existia para entrar na lista. Recarrega para que
+                    # passe a aparecer, ja preferindo o IP da faixa do
+                    # equipamento, que e o que o TFTP vai usar.
+                    novo = (ip_same_subnet(EQUIP_IP_PADRAO)
+                            if kind.get() == "serial" else None)
+                    refresh_ips(prefer=novo)
                     if kind_ == "done":
                         status.set(data)
                         if pb["value"] > 0:
@@ -499,6 +540,7 @@ def run_gui():
             messagebox.showerror(APP_NAME, "Não foi possível pedir elevação para o netsh.")
 
     b_test.configure(command=lambda: start("info"))
+    b_list.configure(command=lambda: start("list"))
     b_backup.configure(command=lambda: start("backup"))
     b_write.configure(command=lambda: start("write"))
     b_fw.configure(command=firewall)
@@ -525,7 +567,7 @@ def _attach_console():
 def run_cli(argv):
     p = argparse.ArgumentParser(prog="bios_pendrive", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("job", choices=["info", "backup", "write"])
+    p.add_argument("job", choices=["info", "list", "backup", "write"])
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--ssh", metavar="HOST[:PORTA]")
     g.add_argument("--telnet", metavar="HOST:PORTA")
