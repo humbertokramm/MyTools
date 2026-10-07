@@ -70,8 +70,14 @@ from scipy.signal import welch
 from scipy.signal import find_peaks
 from scipy import signal
 import os
+import sys
+import time
 from datetime import datetime
 from pprint import pprint
+try:
+	import msvcrt            # Windows: le uma tecla sem esperar ENTER
+except ImportError:
+	msvcrt = None
 import dirHandle as dh
 import re
 from sklearn.cluster import KMeans
@@ -1751,6 +1757,70 @@ class CsvScope:
 			k = input(msg)
 			if k.lower() == abort: exit()
 		
+	def pause(self, msg=None, scope=None, skip='s'):
+		"""Pausa no meio do ensaio: seguir, pular a medida ou abortar limpo.
+
+		Serve para qualquer parada -- armar o trigger, provocar o evento,
+		conferir o sinal antes de capturar. Uma tecla so, sem ENTER. Enquanto
+		espera, mantem as figuras do matplotlib respondendo (zoom,
+		SpanSelector), o que um input() nao permite.
+
+		Teclas:
+			ENTER    segue
+			S        pula esta medida  -> retorna True
+			ESC      aborta: fecha a conexao e encerra o script
+
+		Args:
+			msg   (str): texto exibido. None usa o padrao.
+			scope (Scope): conexao a fechar no ESC. Evita deixar o
+				instrumento armado, como acontece ao interromper com Ctrl+C.
+			skip  (str): tecla que pula a medida.
+
+		Returns:
+			bool: True se a medida deve ser pulada (o script decide o que
+				fazer: um ``continue``, por exemplo).
+
+		Exemplo:
+			if CS.pause(scope=SC):
+				continue
+			SC.main(file, scope=SC, channel=sn['ch'], info=infos)
+		"""
+		if msg is None:
+			msg = (f"\n  ENTER vai!  |  {skip.upper()} pula  |  "
+				   f"ESC aborta\n\t# ")
+		print(msg, end='', flush=True)
+
+		if msvcrt is None:                      # fora do Windows
+			k = input().strip().lower()
+			if k == skip.lower():
+				return True
+			return False
+
+		while True:
+			while not msvcrt.kbhit():
+				try:
+					plt.pause(0.05)             # mantem as figuras vivas
+				except Exception:
+					time.sleep(0.05)
+			k = msvcrt.getch()
+			if k in (b'\x00', b'\xe0'):         # tecla especial: descarta o par
+				msvcrt.getch()
+				continue
+			if k in (b'\r', b'\n'):
+				print()
+				return False
+			if k.lower() == skip.lower().encode():
+				print(f"  [pulada]")
+				return True
+			if k == b'\x1b':                    # ESC
+				print("  [abortado]")
+				if scope is not None and hasattr(scope, 'close'):
+					try:
+						scope.close()
+					except Exception:
+						pass
+				sys.exit(0)
+
 	def file_exists(self,n):
 		if os.path.exists(n):
 			n = n[:-4]
