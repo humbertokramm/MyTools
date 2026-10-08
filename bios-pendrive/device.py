@@ -42,7 +42,7 @@ class SshTransport(Transport):
         self.name = f"SSH {host}:{port}"
         t = paramiko.Transport(socket.create_connection((host, port), timeout))
         t.start_client(timeout=timeout)
-        # O DmOS gera chave nova a cada boot: não dá para fixar a host key.
+        # O equipamento gera chave nova a cada boot: não dá para fixar a host key.
         try:
             t.auth_password(user, password)
         except paramiko.SSHException:
@@ -514,17 +514,37 @@ class Device:
                 res[m.group(2)] = m.group(1)
         return res
 
-    def list_files(self, dev):
-        """[(rel, tamanho)] dos arquivos do pendrive, sem alterar nada.
+    def list_files(self, dev, limite=200):
+        """Lista o conteudo do pendrive sem alterar nada.
 
-        Monta somente leitura e desmonta ao final, para poder conferir o
-        conteudo antes de copiar ou gravar.
+        Monta somente leitura e desmonta ao final.
+
+        A contagem e feita por um comando separado e barato (find | wc -l),
+        independente do tamanho da listagem. O detalhamento com tamanhos
+        roda um 'wc -c' por arquivo -- custoso num pendrive cheio e sobre
+        console serial -- por isso vai limitado a *limite*. Com os dois
+        numeros em maos da para dizer quantos arquivos existem de fato e
+        quantos foram exibidos, em vez de a lista simplesmente terminar.
+
+        Returns:
+            (items, total): items e [(rel, tamanho)] ja ordenado; total e a
+            quantidade real de arquivos no pendrive (None se nao deu para
+            contar). len(items) < total significa listagem truncada.
         """
         self.mount(dev, ro=True)
         try:
+            total = None
+            try:
+                saida = self.sh(f"(cd {self.mp} && find . -type f | wc -l)",
+                                timeout=180).strip().split()
+                if saida and saida[0].isdigit():
+                    total = int(saida[0])
+            except DeviceError:
+                pass
             out = self.sh(
-                f"(cd {self.mp} && find . -type f | while read -r f; do "
-                f"echo \"$(wc -c < \"$f\" | tr -d ' ')|$f\"; done)", timeout=120)
+                f"(cd {self.mp} && find . -type f | head -n {int(limite)} | "
+                f"while read -r f; do "
+                f"echo \"$(wc -c < \"$f\" | tr -d ' ')|$f\"; done)", timeout=600)
         finally:
             self.umount()
         items = []
@@ -533,7 +553,7 @@ class Device:
             rel = rel[2:] if rel.startswith("./") else rel
             if rel and size.isdigit():
                 items.append((rel, int(size)))
-        return sorted(items)
+        return sorted(items), total
 
     # ------------------------------------------------- passo 1: pendrive -> PC
     def backup(self, dev, tftp_ip, local_dir, skip=None, blksize=1468, progress=None):

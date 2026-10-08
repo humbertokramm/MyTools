@@ -1,8 +1,8 @@
 # BIOS Pendrive
 
 Copia os arquivos de BIOS de um pendrive modelo para o PC e grava pendrives
-novos a partir do PC. O pendrive fica espetado no equipamento DmOS (DM4800 /
-48VS); o equipamento envia e baixa os arquivos por TFTP de um servidor que a
+novos a partir do PC. O pendrive fica espetado no equipamento rodando a imagem
+de FT; o equipamento envia e baixa os arquivos por TFTP de um servidor que a
 própria aplicação abre no PC.
 
 ## Uso
@@ -40,7 +40,7 @@ Opções: `--disk /dev/sdX` (se houver mais de um pendrive), `--layout floppy`
 
 ## O que roda no equipamento
 
-Só ferramentas nativas do DmOS: `busybox tftp`, `sfdisk`, `mkdosfs`, `blkid`,
+Só ferramentas nativas da imagem de FT: `busybox tftp`, `sfdisk`, `mkdosfs`, `blkid`,
 `md5sum`. Só discos em `/dev/disk/by-id/usb-*` são aceitos, nunca a eMMC.
 
 Gravação:
@@ -55,7 +55,7 @@ busybox tftp -g -b 1468 -l /mnt/bios_usb/<arq> -r <arq> <IP_PC>   # por arquivo
 umount; drop_caches; mount -o ro; md5sum                          # conferência
 ```
 
-O DmOS gera uma chave SSH nova a cada boot, por isso a aplicação aceita
+O equipamento gera uma chave SSH nova a cada boot, por isso a aplicação aceita
 qualquer host key.
 
 ## Build

@@ -1,5 +1,5 @@
 """BIOS Pendrive - copia os arquivos de BIOS de um pendrive modelo para o PC e
-grava pendrives novos a partir do PC, com o equipamento DmOS baixando via TFTP.
+grava pendrives novos a partir do PC, com o equipamento em FT baixando via TFTP.
 
 Sem argumentos abre a interface gráfica. Linha de comando:
     bios_pendrive.exe info   --ssh 172.22.239.56
@@ -219,14 +219,22 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
 
         # Listar so le o pendrive; nao envolve TFTP nem rede.
         if job == "list":
-            arquivos = dev.list_files(sel["dev"])
+            arquivos, total = dev.list_files(sel["dev"])
             if not arquivos:
-                log("Pendrive vazio (nenhum arquivo).")
+                log("Pendrive vazio (nenhum arquivo)."
+                    if not total else
+                    f"{total} arquivos no pendrive, mas nao foi possivel ler a lista.")
+                return arquivos
+            bytes_listados = sum(s for _, s in arquivos)
+            if total is not None and total > len(arquivos):
+                log(f"{total} arquivos no pendrive. Mostrando os primeiros "
+                    f"{len(arquivos)} ({device.human(bytes_listados)}) -- a "
+                    f"listagem detalhada e limitada para nao demorar demais; "
+                    f"a copia leva todos.")
             else:
-                total = sum(s for _, s in arquivos)
-                log(f"{len(arquivos)} arquivos, {device.human(total)}:")
-                for rel, size in arquivos:
-                    log(f"  {device.human(size):>10}  {rel}")
+                log(f"{len(arquivos)} arquivos, {device.human(bytes_listados)}:")
+            for rel, size in arquivos:
+                log(f"  {device.human(size):>10}  {rel}")
             return arquivos
 
         if not tftp_ip:
