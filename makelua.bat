@@ -71,6 +71,12 @@ echo.
 ::ssh humberto.kramm@172.26.27.37 "bash -l -c 'lua ~/makelua.lua %PROJETO%'"
 
 python C:\Projetos\platf-scripts-lua\util\other\lua_tar_gen.py -p %PROJETO%
+set "RC=%ERRORLEVEL%"
+
+if not "%RC%"=="0" (
+    set "MOTIVO=o lua_tar_gen.py terminou com erro %RC%"
+    goto :falhou
+)
 
 echo.
 echo Organizando arquivos gerados...
@@ -78,17 +84,45 @@ echo Organizando arquivos gerados...
 cd /d C:\Projetos\platf-scripts-lua
 
 :: Deleta arquivos desnecessários
-del /f /q lua_tar.txt
-del /f /q lua.tar.gz
+del /f /q lua_tar.txt 2>nul
+del /f /q lua.tar.gz 2>nul
 
 :: Move lua.tar.gz para pasta TFTP substituindo
-move /y lua_%PROJETO%_*.tar.gz C:\Testes\TFTP\lua_%PROJETO%.tar.gz
+move /y lua_%PROJETO%_*.tar.gz C:\Testes\TFTP\lua_%PROJETO%.tar.gz >nul
+
+:: Confere o pacote no destino: o lua_tar_gen.py pode sair com 0 sem gerar
+:: nada, e ai o move falha em silencio -- sem esta checagem o OK sairia
+:: verde com o tar.gz antigo (ou nenhum) na pasta TFTP.
+if not exist C:\Testes\TFTP\lua_%PROJETO%.tar.gz (
+    set "MOTIVO=o pacote lua_%PROJETO%.tar.gz nao chegou em C:\Testes\TFTP"
+    goto :falhou
+)
 
 echo Arquivos organizados!
 
-
 echo.
-echo =========================================
-echo Processo finalizado!
-echo =========================================
+echo -----------------------------------------
+echo Lua Version
+type C:\Projetos\platf-scripts-lua\release_info\luaversion.txt
+echo -----------------------------------------
+echo.
+
+powershell -NoProfile -Command ^
+    "$p = 'C:\Testes\TFTP\lua_%PROJETO%.tar.gz';" ^
+    "$f = Get-Item $p -ErrorAction SilentlyContinue;" ^
+    "$tam = if ($f) { '{0:N1} KB' -f ($f.Length/1KB) } else { 'tamanho indisponivel' };" ^
+    "Write-Host '=========================================' -ForegroundColor Green;" ^
+    "Write-Host ('  OK - lua_%PROJETO%.tar.gz  (' + $tam + ')') -ForegroundColor Green;" ^
+    "Write-Host '=========================================' -ForegroundColor Green"
 pause
+exit /b 0
+
+:falhou
+echo.
+powershell -NoProfile -Command ^
+    "Write-Host '=========================================' -ForegroundColor Red;" ^
+    "Write-Host '  FAIL - %PROJETO% nao foi compilado' -ForegroundColor Red;" ^
+    "Write-Host '  %MOTIVO%' -ForegroundColor Red;" ^
+    "Write-Host '=========================================' -ForegroundColor Red"
+pause
+exit /b 1
