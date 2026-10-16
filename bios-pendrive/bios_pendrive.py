@@ -12,6 +12,7 @@ import ctypes
 import json
 import os
 import queue
+import shutil
 import socket
 import sys
 import threading
@@ -28,6 +29,35 @@ VERSION = "1.0.0"
 # serial. Mesmo valor usado nas macros do TeraTerm e no http_server.
 EQUIP_IP_PADRAO = "192.168.0.25"
 
+# Ferramentas EFI mantidas pela Engenharia de Teste. O compartilhamento e a
+# fonte: todo mundo grava o pendrive com a mesma versao, sem depender de quem
+# copiou o que para a pasta local. Fora da rede a copia local serve.
+SHARE_TOOLS_DIR = r"\\servidor.datacom.net.br\dm_projetos\Eng_Teste\TF\Utilitários\AfuEfix64"
+SHARE_TOOLS = ("AfuEfix64.efi", "watchdog_off.nsh")
+
+# Passos do update de BIOS. Sao poucos e feitos raramente, entao acabam sempre
+# custando uma ida ao manual.
+BIOS_UPDATE_STEPS = """\
+Atualização da BIOS pelo pendrive
+
+ 1. Ligue o equipamento com o pendrive espetado e pressione ESC para entrar
+    na BIOS.
+ 2. Na aba "IntelRCSetup", habilite o modo "Relax".
+ 3. Na aba "Save & Exit", selecione "UEFI: Built-in EFI Shell".
+ 4. No reboot, pressione ESC.
+ 5. Com o shell aberto, entre no pendrive:
+
+        fs0:
+
+ 6. Desabilite o watchdog da BIOS (se o script estiver no pendrive):
+
+        watchdog_off.nsh
+
+ 7. Grave a imagem:
+
+        AfuEfix64.efi sua_bios.bin /p /b /n /me /X
+"""
+
 
 def app_dir():
     if getattr(sys, "frozen", False):
@@ -38,6 +68,58 @@ def app_dir():
 DEFAULT_DIR = os.path.join(app_dir(), "arquivos_pendrive")
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", app_dir()), "BiosPendrive", "config.json")
 LOG_PATH = os.path.join(app_dir(), "bios_pendrive.log")
+
+
+def _share_reachable(path, timeout):
+    """os.path.isdir() num UNC fora de alcance pode travar por dezenas de
+    segundos, entao a sondagem roda em thread e a espera tem limite."""
+    res = {}
+
+    def go():
+        try:
+            res["ok"] = os.path.isdir(path)
+        except OSError:
+            res["ok"] = False
+
+    th = threading.Thread(target=go, daemon=True)
+    th.start()
+    th.join(timeout)
+    return res.get("ok", False)
+
+
+def sync_share_tools(folder, log=print, timeout=4.0):
+    """Traz as ferramentas EFI do compartilhamento para a pasta do pendrive.
+
+    Copia so o que mudou, comparando MD5. Se o compartilhamento nao responde
+    (fora da rede, VPN caida, sem permissao), segue com o que ja esta na pasta:
+    gravar com a versao local e melhor do que nao gravar.
+    Devolve a lista de nomes atualizados.
+    """
+    if not _share_reachable(SHARE_TOOLS_DIR, timeout):
+        log(f"AVISO: {SHARE_TOOLS_DIR} inacessivel; usando as ferramentas que "
+            f"ja estao em {folder}.")
+        return []
+
+    atualizados = []
+    for nome in SHARE_TOOLS:
+        origem = os.path.join(SHARE_TOOLS_DIR, nome)
+        destino = os.path.join(folder, nome)
+        try:
+            if not os.path.isfile(origem):
+                # O watchdog_off.nsh ainda nao foi publicado; quando for, entra
+                # sozinho na proxima gravacao.
+                continue
+            if os.path.isfile(destino) and device.md5_file(origem) == device.md5_file(destino):
+                log(f"{nome}: ja igual ao do compartilhamento.")
+                continue
+            os.makedirs(folder, exist_ok=True)
+            shutil.copyfile(origem, destino)
+            log(f"{nome}: atualizado a partir do compartilhamento.")
+            atualizados.append(nome)
+        except OSError as e:
+            log(f"AVISO: nao consegui trazer {nome} do compartilhamento ({e}); "
+                f"seguindo com a copia local.")
+    return atualizados
 
 
 # =========================================================================
@@ -241,6 +323,10 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
             raise device.DeviceError("selecione o IP do PC para o TFTP")
 
         os.makedirs(folder, exist_ok=True)
+        if job == "write":
+            # Antes de contar os arquivos, para o pendrive sair com a
+            # versao que a Engenharia de Teste publica.
+            sync_share_tools(folder, log=log)
         with TftpServer(folder, tftp_ip, log=log, allow_write=(job == "backup")) as srv:
             try:
                 if job == "backup":
@@ -357,7 +443,8 @@ def run_gui():
     b_backup = ttk.Button(fb, text="1) Copiar pendrive → PC")
     b_write = ttk.Button(fb, text="2) Gravar PC → pendrive")
     b_fw = ttk.Button(fb, text="Liberar no Firewall")
-    for i, b in enumerate((b_test, b_list, b_backup, b_write, b_fw)):
+    b_steps = ttk.Button(fb, text="Instruções da BIOS")
+    for i, b in enumerate((b_test, b_list, b_backup, b_write, b_fw, b_steps)):
         b.grid(row=0, column=i, padx=4, pady=4, sticky="w")
     buttons = (b_test, b_list, b_backup, b_write)
 
@@ -541,6 +628,20 @@ def run_gui():
             pass
         root.after(100, pump)
 
+    def mostrar_passos():
+        win = tk.Toplevel(root)
+        win.title("Atualização da BIOS")
+        txt = tk.Text(win, width=78, height=26, wrap="none")
+        txt.grid(row=0, column=0, sticky="nsew")
+        sb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
+        sb.grid(row=0, column=1, sticky="ns")
+        txt.configure(yscrollcommand=sb.set)
+        txt.insert("1.0", BIOS_UPDATE_STEPS)
+        # Somente leitura, mas ainda selecionavel para copiar os comandos.
+        txt.configure(state="disabled")
+        win.rowconfigure(0, weight=1)
+        win.columnconfigure(0, weight=1)
+
     def firewall():
         if add_firewall_rule():
             log("Pedido de liberação no Firewall enviado (confirme o UAC).")
@@ -552,6 +653,7 @@ def run_gui():
     b_backup.configure(command=lambda: start("backup"))
     b_write.configure(command=lambda: start("write"))
     b_fw.configure(command=firewall)
+    b_steps.configure(command=mostrar_passos)
 
     log(f"{APP_NAME} {VERSION}. Pasta: {folder.get()}")
     log("1) Com o pendrive MODELO no equipamento: 'Copiar pendrive → PC'.")

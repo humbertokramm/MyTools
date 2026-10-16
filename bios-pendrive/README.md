@@ -24,8 +24,48 @@ A pasta padrão é `arquivos_pendrive` ao lado do `.exe`. Dá pra pôr arquivos
 nela à mão antes de gravar (outra BIOS, por exemplo). O log de tudo fica em
 `bios_pendrive.log` ao lado do `.exe`.
 
+Na hora de gravar, o `AfuEfix64.efi` e o `watchdog_off.nsh` são trazidos do
+compartilhamento da Engenharia de Teste, para o pendrive sair sempre com a
+versão que vale para todo mundo:
+
+```
+\\servidor.datacom.net.br\dm_projetos\Eng_Teste\TF\Utilitários\AfuEfix64
+```
+
+Só copia o que mudou (compara MD5) e, se o compartilhamento não responder —
+fora da rede, VPN caída, sem permissão —, segue com a cópia que já está na
+pasta e avisa no log. O `watchdog_off.nsh` ainda não foi publicado lá; quando
+for, entra sozinho na gravação seguinte.
+
 Se nenhuma transferência chegar ao PC, use **Liberar no Firewall** (pede UAC e
 cria uma regra de entrada UDP para o executável).
+
+## Atualização da BIOS pelo pendrive
+
+Os passos também estão no botão **Instruções da BIOS** da interface.
+
+ 1. Ligue o equipamento com o pendrive espetado e pressione `ESC` para entrar
+    na BIOS.
+ 2. Na aba **IntelRCSetup**, habilite o modo **Relax**.
+ 3. Na aba **Save & Exit**, selecione **UEFI: Built-in EFI Shell**.
+ 4. No reboot, pressione `ESC`.
+ 5. Com o shell aberto, entre no pendrive:
+
+    ```
+    fs0:
+    ```
+
+ 6. Desabilite o watchdog da BIOS (se o script estiver no pendrive):
+
+    ```
+    watchdog_off.nsh
+    ```
+
+ 7. Grave a imagem:
+
+    ```
+    AfuEfix64.efi sua_bios.bin /p /b /n /me /X
+    ```
 
 ## Linha de comando
 
