@@ -50,6 +50,57 @@ def format_eng(label, suffix=False):
     return ENG_NOTATION[label]
 
 
+AUTO = 'auto'
+
+
+def is_auto_label(label):
+    """True when the label asks for an automatic unit, e.g. ``'Time[auto s]'``.
+
+    Args:
+        label (str): Axis label.
+
+    Returns:
+        bool: True when the bracketed part starts with ``auto``.
+    """
+    if not isinstance(label, str):
+        return False
+    i, o = label.find('[') + 1, label.find(']')
+    return 0 < i < o and label[i:o].strip().lower().startswith(AUTO)
+
+
+def resolve_auto_label(label, values, by='span'):
+    """Resolve ``'Time[auto s]'`` into ``'Time[ms]'`` from the data itself.
+
+    Args:
+        label (str): Label carrying ``auto`` inside the brackets. Whatever
+            follows is the unit symbol, so ``'auto s'`` means seconds.
+        values (array-like): Data in the base unit (seconds, volts).
+        by (str, optional): ``'span'`` picks the notation from the range
+            (max - min), ``'magnitude'`` from the largest absolute value.
+            Defaults to ``'span'``.
+
+    Returns:
+        str: Resolved label. Falls back to the base unit when there is no
+            finite data to look at.
+
+    Note:
+        Time is read by span because a capture may sit on a large time
+        offset; voltage is read by magnitude so that a 0.9 V rail with a few
+        mV of ripple still reads in volts instead of becoming 900000 uV.
+    """
+    i, o = label.find('[') + 1, label.find(']')
+    name = label[:i - 1]
+    symbol = label[i:o].strip()[len(AUTO):].strip()
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return f'{name}[{symbol}]'
+    ref = (v.max() - v.min()) if by == 'span' else np.abs(v).max()
+    meta = format_eng_str(ref, string=False)
+    unit = meta['unit'] if isinstance(meta, dict) else ''
+    return f'{name}[{unit}{symbol}]'
+
+
 def format_eng_str(number, decimals=2, string=True):
     """Convert a number to an engineering-notation string.
 

@@ -188,7 +188,14 @@ class CsvScope:
 			"logicLimits":False,
 			"maxLimits":False
 		}
+		# Rotulos dos eixos no dominio do tempo. Com 'auto' entre colchetes a
+		# notacao sai dos proprios dados -- "Time[auto s]", "Voltage[auto V]".
 		self.labelx='Time[ms]'
+		self.labely='Voltage[V]'
+		# Unidade ja resolvida de cada rotulo 'auto'. A primeira serie decide e
+		# as demais herdam: series do mesmo grafico dividem o eixo, entao nao
+		# podem acabar em escalas diferentes.
+		self._auto={}
 		# Onde escrever o valor das linhas de limite: 'left', 'right' ou
 		# False para ocultar. Padrao 'left' porque a legenda costuma ficar
 		# no canto superior direito.
@@ -483,7 +490,7 @@ class CsvScope:
 	def set_data(self, n,config,modo):
 		if config is None: config = {}
 		lx=config['label x'] if 'label x' in config else self.labelx
-		ly=config['label y'] if 'label y' in config else 'Voltage[V]'
+		ly=config['label y'] if 'label y' in config else self.labely
 		brd=config['brand'] if 'brand' in config else 'ROHDE'
 		pln=config['plane'] if 'plane' in config else 1
 		ot=config['offset time'] if 'offset time' in config else 0 
@@ -496,10 +503,12 @@ class CsvScope:
 			'labely':ly,
 			'name': n,
 			'plane':pln,
-			'engNoteX':format_eng(lx),
-			'engNoteY':format_eng(ly),
-			'engNoteXstr':format_eng(lx,'str'),
-			'engNoteYstr':format_eng(ly,'str'),
+			# Rotulo 'auto' ainda nao tem fator: fica 1 ate o _handle_scales
+			# ver os dados e trocar o rotulo pela unidade que couber.
+			'engNoteX':1 if is_auto_label(lx) else format_eng(lx),
+			'engNoteY':1 if is_auto_label(ly) else format_eng(ly),
+			'engNoteXstr':'' if is_auto_label(lx) else format_eng(lx,True),
+			'engNoteYstr':'' if is_auto_label(ly) else format_eng(ly,True),
 			'symbolX':format_eng(lx,'symbol'),
 			'symbolY':format_eng(ly,'symbol'),
 			'type': modo,
@@ -522,13 +531,52 @@ class CsvScope:
 		return dados
 
 	def _handle_scales(self, d,df,o=0,gain=None,c=1):
+		g = gain if gain != None else d['gain']
+		# Unidade automatica: so aqui os dados existem para decidir a notacao.
+		self._resolve_auto(d,'x',df[df.columns[0]].astype(float))
+		self._resolve_auto(d,'y',df[df.columns[c]].astype(float)*g)
 		lx = d['labelx']
 		ly = d['labely']
 		ot = d['offset time']
 		o  = d['offset y']
-		g = gain if gain != None else d['gain']
 		d['x'] = df[df.columns[0]].astype(float)*(1/format_eng(lx))+ot*(1/format_eng(lx))
 		d['y'] = df[df.columns[c]].astype(float)*g*(1/format_eng(ly))+o*(1/format_eng(ly))
+
+	def _resolve_auto(self, d, eixo, valores):
+		"""Troca um rotulo 'auto' pela unidade que os dados pedem.
+
+		A escolha fica guardada em self._auto, entao o mesmo rotulo 'auto'
+		resolve sempre igual dentro de um CsvScope -- venha ele do self.labelx
+		ou do config de cada serie. Sem isso duas series do mesmo grafico
+		poderiam cair em escalas diferentes e o eixo mentiria.
+		"""
+		campo = 'labelx' if eixo == 'x' else 'labely'
+		antigo = d[campo]
+		if not is_auto_label(antigo): return
+		novo = self._auto.get(antigo)
+		if novo is None:
+			# Tempo pela faixa (a captura pode estar sobre um offset grande),
+			# tensao pela magnitude (um trilho de 0,9 V com alguns mV de ripple
+			# deve ler em volts, nao virar 900000 uV).
+			novo = resolve_auto_label(antigo, valores,
+				by='span' if eixo == 'x' else 'magnitude')
+			self._auto[antigo] = novo
+		d[campo] = novo
+		sufixo = 'X' if eixo == 'x' else 'Y'
+		d['engNote'+sufixo] = format_eng(novo)
+		d['engNote'+sufixo+'str'] = format_eng(novo,True)
+		d['symbol'+sufixo] = format_eng(novo,'symbol')
+		if eixo == 'x':
+			if self.labelx == antigo: self.labelx = novo
+			return
+		if self.labely == antigo: self.labely = novo
+		# O yDf agrupa os eixos Y pelo rotulo e ja registrou o 'auto' no
+		# set_data; sem corrigir aqui o plot() nao acha a serie.
+		if antigo in self.yDf['label'].values:
+			if novo in self.yDf['label'].values:
+				self.yDf = self.yDf[self.yDf['label'] != antigo].reset_index(drop=True)
+			else:
+				self.yDf.loc[self.yDf['label'] == antigo, 'label'] = novo
 
 	def _handle_cuts(self,df,config):
 		if config is None: config = {}
@@ -992,8 +1040,10 @@ class CsvScope:
 				ymin = y[i2]
 				dV = ymax - ymin
 				if self.Limits["logicLimits"]:
-					dy1= self.Limits["logicLimits"]["high_min"]
-					dy2= self.Limits["logicLimits"]["low_max"]
+					# y esta na unidade do eixo e o limite em volts
+					fy = s.get('engNoteY', 1) or 1
+					dy1= self.Limits["logicLimits"]["high_min"] / fy
+					dy2= self.Limits["logicLimits"]["low_max"] / fy
 				else:
 					dy1 = dV*max(s['std duty'])+ymin
 					dy2 = dV*min(s['std duty'])+ymin
@@ -1223,8 +1273,18 @@ class CsvScope:
 		# ViL, ViH ou limite absoluto) e colidiria com os ticks existentes
 		# quando o limite cai perto de um deles (ex: ViL 0.99 x tick 1.0).
 		pos = getattr(self, 'limitLabels', 'left')
-		unidade = self.reads[0].get('symbolY', '') if self.reads else ''
+		# Notacao + simbolo ('mV'), nao so o simbolo: com o eixo em mV o
+		# symbolY sozinho escrevia "nom 900V".
+		unidade = format_eng(self.reads[0]['labely'], True) if self.reads else ''
 		xpos, ha = (0.004, 'left') if pos == 'left' else (0.996, 'right')
+
+		# Os limites sao declarados em volts, mas o eixo Y esta na unidade do
+		# rotulo (mV, uV...). Sem converter, uma faixa de 0,9 V sai desenhada em
+		# 0,9 mV num grafico que vai a 900 mV. So nao aparecia porque o rotulo
+		# padrao era 'Voltage[V]', com fator 1.
+		yfat = self.reads[0].get('engNoteY', 1) if self.reads else 1
+		if not yfat: yfat = 1
+		esc = lambda v: v / yfat
 
 		def _rotula(y, nome, cor):
 			if pos not in ('left', 'right'):
@@ -1240,13 +1300,13 @@ class CsvScope:
 		# =============================
 		if 'logicLimits' in self.Limits:
 			if self.Limits['logicLimits']:
-				ax.axhspan(self.Limits['logicLimits']["low_min"], self.Limits['logicLimits']["low_max"], alpha=0.15)
-				ax.axhspan(self.Limits['logicLimits']["high_min"], self.Limits['logicLimits']["high_max"], alpha=0.15)
+				ax.axhspan(esc(self.Limits['logicLimits']["low_min"]), esc(self.Limits['logicLimits']["low_max"]), alpha=0.15)
+				ax.axhspan(esc(self.Limits['logicLimits']["high_min"]), esc(self.Limits['logicLimits']["high_max"]), alpha=0.15)
 
-				ln = ax.axhline(self.Limits['logicLimits']["low_max"], linestyle='--', linewidth=0.8)
-				_rotula(self.Limits['logicLimits']["low_max"], 'ViL', ln.get_color())
-				ln = ax.axhline(self.Limits['logicLimits']["high_min"], linestyle='--', linewidth=0.8)
-				_rotula(self.Limits['logicLimits']["high_min"], 'ViH', ln.get_color())
+				ln = ax.axhline(esc(self.Limits['logicLimits']["low_max"]), linestyle='--', linewidth=0.8)
+				_rotula(esc(self.Limits['logicLimits']["low_max"]), 'ViL', ln.get_color())
+				ln = ax.axhline(esc(self.Limits['logicLimits']["high_min"]), linestyle='--', linewidth=0.8)
+				_rotula(esc(self.Limits['logicLimits']["high_min"]), 'ViH', ln.get_color())
 
 		# =============================
 		# Power rail: nominal +- tolerancia
@@ -1261,23 +1321,23 @@ class CsvScope:
 			# mesmo tom: a sobreposicao escurece sozinha o miolo, e a faixa
 			# mais apertada fica naturalmente mais destacada.
 			for lo_pct, hi_pct in faixas_pct(p.get('pct', 0)):
-				lo = nom * (1 + lo_pct / 100.0)
-				hi = nom * (1 + hi_pct / 100.0)
+				lo = esc(nom * (1 + lo_pct / 100.0))
+				hi = esc(nom * (1 + hi_pct / 100.0))
 				ax.axhspan(lo, hi, alpha=0.13, color='C0')
 				ax.axhline(lo, linestyle='--', linewidth=0.8, color='C0')
 				_rotula(lo, f'{lo_pct:+g}%', 'C0')
 				ax.axhline(hi, linestyle='--', linewidth=0.8, color='C0')
 				_rotula(hi, f'{hi_pct:+g}%', 'C0')
-			ax.axhline(nom, linestyle=':', linewidth=0.8, color='gray')
-			_rotula(nom, 'nom', 'gray')
+			ax.axhline(esc(nom), linestyle=':', linewidth=0.8, color='gray')
+			_rotula(esc(nom), 'nom', 'gray')
 
 		# Max limits (independent)
 		if 'maxLimits' in self.Limits:
 			if self.Limits['maxLimits']:
-				ax.axhline(self.Limits['maxLimits']["low"], linestyle='--', linewidth=0.8, color="red")
-				_rotula(self.Limits['maxLimits']["low"], 'min', 'red')
-				ax.axhline(self.Limits['maxLimits']["high"], linestyle='--', linewidth=0.8, color="red")
-				_rotula(self.Limits['maxLimits']["high"], 'max', 'red')
+				ax.axhline(esc(self.Limits['maxLimits']["low"]), linestyle='--', linewidth=0.8, color="red")
+				_rotula(esc(self.Limits['maxLimits']["low"]), 'min', 'red')
+				ax.axhline(esc(self.Limits['maxLimits']["high"]), linestyle='--', linewidth=0.8, color="red")
+				_rotula(esc(self.Limits['maxLimits']["high"]), 'max', 'red')
 		return ax
 
 	def plot(self,t='nan',grid = True,size=(12, 6),out='png',path='',transparent=False):
@@ -1601,7 +1661,7 @@ class CsvScope:
 			plt.semilogx()
 		else:
 			symbol = format_eng_str(max(max(s['fft']['f']) for s in grupo))[-1]
-			factor = EngNotation[symbol]
+			factor = ENG_NOTATION[symbol]
 			plt.xlabel("Domínio da Frequência ["+symbol+"Hz]")
 		plt.ylabel(ylabel)
 
