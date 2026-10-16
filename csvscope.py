@@ -86,6 +86,51 @@ from engMath import *
 from pulse_mask import G703Clock2048kHz, G703Data2048kbits
 
 
+def fft_mask(pontos, nome='', cor='r'):
+	"""Monta uma mascara de espectro a partir dos vertices do grafico.
+
+	Args:
+		pontos (seq): vertices ``(frequencia_Hz, amplitude_V)``, em ordem
+			crescente de frequencia. Sao os cantos da curva do datasheet.
+		nome (str): rotulo que aparece na legenda e no veredito.
+		cor (str): cor da curva no grafico.
+
+	Returns:
+		dict: pronto para ``CsvScope.fftMask``.
+
+	Exemplo:
+		CS.fftMask = fft_mask([(0.4e6, 15e-3), (3e6, 3e-3), (40e6, 3e-3)],
+		                      nome="VDDA")
+	"""
+	if isinstance(pontos, dict):
+		return pontos
+	f = [float(p[0]) for p in pontos]
+	a = [float(p[1]) for p in pontos]
+	if any(f[i] >= f[i+1] for i in range(len(f)-1)):
+		raise ValueError("fft_mask: as frequencias precisam ser crescentes")
+	return {'f': f, 'a': a, 'nome': nome, 'cor': cor}
+
+
+def mask_limit(mask, f):
+	"""Limite da mascara em cada frequencia de ``f``, em volts.
+
+	Os trechos da mascara sao retas no grafico do datasheet, que tem o eixo X
+	em log -- entao a interpolacao e linear em log10(f), nao em f. Interpolar
+	em f daria um limite bem mais apertado no meio de cada decada.
+
+	Fora da faixa coberta pela mascara devolve NaN: ali nao existe limite
+	especificado, e essas raias ficam de fora do veredito em vez de serem
+	julgadas pelo valor da ponta.
+	"""
+	mask = fft_mask(mask)
+	fm = np.asarray(mask['f'], dtype=float)
+	am = np.asarray(mask['a'], dtype=float)
+	f  = np.asarray(f, dtype=float)
+	with np.errstate(divide='ignore', invalid='ignore'):
+		lf = np.log10(np.where(f > 0, f, np.nan))
+	return np.interp(lf, np.log10(fm), am, left=np.nan, right=np.nan)
+
+
 def faixas_pct(pct):
 	"""Normaliza a tolerancia de fonte para uma lista de (lo_pct, hi_pct).
 
@@ -152,6 +197,11 @@ class CsvScope:
 		self.fftZone = None
 		self.fftZonetxt = 'left'
 		self.fftylabel = "auto"
+		# Mascara de limite do espectro: curva de ruido maximo em funcao da
+		# frequencia (ex.: o filtro de alimentacao do SERDES). Setada antes do
+		# format_fft, fica gravada na serie -- entao da para usar uma mascara
+		# diferente em cada grafico.
+		self.fftMask = None
 	def __str__(self):
 		return self.title
 
@@ -1445,6 +1495,7 @@ class CsvScope:
 				b.append(fft[i])
 		self.reads[id]['fft']={'f':a,'A':np.abs(b)}
 		if f: self.reads[id]['fft-tittle'] = f
+		if self.fftMask: self.reads[id]['fft-mask'] = fft_mask(self.fftMask)
 
 	def ifft_data(self,fft,id,name,f=[None,None]):
 		# reconstrução no tempo
@@ -1548,18 +1599,41 @@ class CsvScope:
 				
 				plt.plot(x,y)
 
+				# A mascara entra antes de medir a area porque ela costuma ser uma
+				# ordem de grandeza maior que o espectro -- e quem manda no topo do
+				# eixo. Desenhando depois, as anotacoes ficariam posicionadas pelo
+				# yMax dos dados e se amontoariam todas rente ao eixo X.
+				mask = serie.get('fft-mask')
+				if mask:
+					fm = np.asarray(mask['f'], dtype=float)
+					# Pontos densos em log: num eixo X linear os trechos da mascara
+					# nao sao retas, e ligar so os vertices deixaria a curva errada
+					# entre eles.
+					fd = np.logspace(np.log10(fm[0]), np.log10(fm[-1]), 400)
+					ld = mask_limit(mask, fd) / yfator
+					maskNome = mask.get('nome') or 'limite'
+					plt.plot(fd / factor, ld, color=mask.get('cor', 'r'),
+						linestyle='--', linewidth=1.5, label=f"Mascara {maskNome}")
+					plt.legend(loc='upper right', fontsize=8)
+
 				plt.grid(grid,which="both")
 				
 				temp={'x':x,'y':y}
 				area = self._plot_area(temp,axe)
+				# Referencia vertical das anotacoes. Sem mascara e o yMax dos dados,
+				# como sempre foi; com mascara passa a ser o topo real do eixo, que
+				# ja inclui a curva de limite.
+				yTop = area['yMax']
+				if mask:
+					yTop = plt.gca().get_ylim()[1]
 				if serie['data'] != 'None':
-					textY = -area['yMax'] / 40
+					textY = -yTop / 40
 					plt.text(area['xCenter'],textY, serie['data'], ha='center', fontsize=8)
 				
 				if 'ac_ripple' in serie:
 					vpp = format_eng_str(serie['ac_ripple'][0]['vpp'],2)
 					text = f"AC Ripple: {vpp}Vpp"
-					plt.text(area['xTxt'], area['yMax']*0.9, text,ha=area['ha'], fontsize=10, color='black')
+					plt.text(area['xTxt'], yTop*0.9, text,ha=area['ha'], fontsize=10, color='black')
 
 				if self.fftZone != None:
 					line = 0.9
@@ -1570,12 +1644,46 @@ class CsvScope:
 						strZonef1 = format_eng_str(vZone['f_min'],0)+"Hz"
 						strZonef2 = format_eng_str(vZone['f_max'],0)+"Hz"
 						text = f"AC Ripple: {vpp}Vpp in {strZonef1} to {strZonef2}"
-						plt.text(area['xTxt'], area['yMax']*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
+						plt.text(area['xTxt'], yTop*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
 						f_min_plot = vZone['f_min'] / factor
 						f_max_plot = vZone['f_max'] / factor
 						plt.axvspan(f_min_plot, f_max_plot, alpha=0.15, color=ZoneColor)
 						plt.axvline(f_min_plot, color=ZoneColor, linestyle='--', linewidth=1)
 						plt.axvline(f_max_plot, color=ZoneColor, linestyle='--', linewidth=1)
+
+				# Veredito da mascara. Diferente da fftZone, que soma o ripple de
+				# uma faixa inteira: aqui cada raia do espectro e comparada com o
+				# seu proprio limite, que varia com a frequencia.
+				if mask:
+					nome = maskNome
+					lim = mask_limit(mask, x * factor) / yfator
+					coberto = ~np.isnan(lim)
+					if coberto.any():
+						# Os valores saem em notacao de engenharia a partir dos volts,
+						# nao da unidade do eixo: 3 mV le melhor que 3e+03 uV.
+						eng = lambda v: format_eng_str(v * yfator, 2) + 'V'
+						# Onde escrever: abaixo do AC Ripple e das linhas das zonas
+						line = 0.9
+						if self.fftZone is not None and 'ac_ripple_filter' in serie:
+							line -= 0.05 * len(serie['ac_ripple_filter'])
+						line -= 0.05
+						viola = coberto & (y > lim)
+						if viola.any():
+							# pior = maior excesso relativo, nao maior amplitude: uma
+							# raia pequena numa regiao de limite apertado e pior
+							# violacao do que uma raia grande onde a mascara abre.
+							pior = int(np.nanargmax(np.where(viola, y / lim, np.nan)))
+							txt = (f"Mascara {nome}: FAIL - {int(viola.sum())} raia(s) acima, "
+								f"pior em {format_eng_str(x[pior] * factor, 0)}Hz "
+								f"({eng(y[pior])} vs {eng(lim[pior])})")
+							cor = 'red'
+							plt.plot(x[pior], y[pior], 'x', color='red', markersize=9)
+						else:
+							folga = float(np.nanmin(np.where(coberto, lim - y, np.nan)))
+							txt = f"Mascara {nome}: PASS - folga minima {eng(folga)}"
+							cor = 'green'
+						plt.text(area['xTxt'], yTop * line, txt,
+							ha=area['ha'], fontsize=10, color=cor)
 
 				for note in serie['draw']:
 					a=self._draw_arrow(note,[0,0])

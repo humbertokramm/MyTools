@@ -289,3 +289,83 @@ def getLimit(side,vcc="3V3",type="input"):
             "high": ViH[1],
         }
     return values
+
+# ---------------------------------------------------------------------------
+# Mascaras de ruido no espectro
+# ---------------------------------------------------------------------------
+# Cada entrada sao os VERTICES da curva do datasheet, em (Hz, V). Entre dois
+# vertices a mascara e uma reta no grafico log-frequencia -- e assim que o
+# mask_limit() interpola.
+#
+# Os valores abaixo foram lidos da figura "SERDES and USR Analog Power Filter
+# Mask Requirements". A figura nao traz tabela de vertices, entao as
+# frequencias de canto sao aproximadas; conferir contra o datasheet antes de
+# usar num relatorio de aprovacao.
+mascaras = {
+    # A curva azul da figura so aparece entre 0,8 e 40 MHz. Fora dai ela nao
+    # termina: fica exatamente por baixo da vermelha (ate 0,8 MHz, onde as
+    # duas valem 22 e depois 15) e por baixo da verde (de 40 MHz em diante,
+    # ambas em 3 mV, subindo juntas no fim). Por isso os vertices abaixo
+    # repetem os da VDDH no inicio e os da SD_PLL_AVDD no fim -- se a mascara
+    # parasse em 40 MHz, todo o espectro acima disso ficaria sem limite e
+    # passaria sem ser julgado.
+    "VDDA": {
+        "cor": "tab:blue",
+        "pontos": [
+            (0.1e6,  22e-3),    # sob a VDDH
+            (0.4e6,  22e-3),    # sob a VDDH
+            (0.8e6,  15e-3),    # aqui se separa da VDDH
+            (3.2e6,   3e-3),
+            (40e6,    3e-3),    # daqui em diante sob a SD_PLL_AVDD
+            (400e6,   3e-3),
+            (1000e6, 15e-3),
+        ],
+    },
+    "VDDH": {
+        "cor": "tab:red",
+        "pontos": [
+            (0.1e6,  22e-3),
+            (0.4e6,  22e-3),
+            (0.8e6,  15e-3),
+            (400e6,  15e-3),
+            (1000e6, 22e-3),
+        ],
+    },
+    "SD_PLL_AVDD": {
+        "cor": "tab:green",
+        "pontos": [
+            (0.1e6,   9e-3),
+            (0.65e6,  1e-3),
+            (20e6,    1e-3),
+            (40e6,    3e-3),
+            (400e6,   3e-3),
+            (1000e6, 15e-3),
+        ],
+    },
+}
+
+
+def getMask(nome):
+    """Mascara de ruido de um trilho, pronta para ``CsvScope.fftMask``.
+
+    Args:
+        nome (str): chave em ``mascaras``, ex ``"VDDA"``.
+
+    Returns:
+        dict: curva de limite com nome e cor.
+
+    Exemplo:
+        CS.fftMask = getMask("VDDA")
+        CS.format_fft(0, f="Ruido em VDDA")
+
+    Note:
+        A mascara e gravada na serie no ``format_fft``, entao para usar uma
+        mascara diferente em cada grafico basta trocar ``CS.fftMask`` antes
+        de cada chamada.
+    """
+    from csvscope import fft_mask
+    if nome not in mascaras:
+        raise KeyError(f"mascara '{nome}' nao cadastrada. Disponiveis: "
+                       + ", ".join(sorted(mascaras)))
+    m = mascaras[nome]
+    return fft_mask(m["pontos"], nome=nome, cor=m["cor"])
