@@ -1769,6 +1769,12 @@ class CsvScope:
 				extras = []
 				if 'ac_ripple' in s:
 					extras.append(format_eng_str(s['ac_ripple'][0]['vpp'],2)+'Vpp')
+				# Com fftZone o numero que interessa costuma ser o da faixa, nao o
+				# total. Aqui sai so o valor, com a chave Zn: o intervalo de cada
+				# zona e o mesmo para todas as series e aparece uma vez so no texto,
+				# senao a legenda repetiria a faixa em cada linha.
+				for iZ, vZ in enumerate(s.get('ac_ripple_filter', []), start=1):
+					extras.append(f"Z{iZ} {format_eng_str(vZ['vpp'],2)}Vpp")
 				if mask:
 					extras.append('FAIL' if falhou else 'PASS')
 				if extras: rotulo = f"{rotulo}  ({', '.join(extras)})"
@@ -1813,12 +1819,15 @@ class CsvScope:
 			for iZone, vZone in enumerate(grupo[0]['ac_ripple_filter']):
 				ZoneColor = list(mcolors.BASE_COLORS.keys())[iZone]
 				line -= 0.05
-				if not varias:
+				strZonef1 = format_eng_str(vZone['f_min'],0)+"Hz"
+				strZonef2 = format_eng_str(vZone['f_max'],0)+"Hz"
+				if varias:
+					# So a faixa: o vpp de cada serie esta na legenda.
+					text = f"Z{iZone+1}: {strZonef1} to {strZonef2}"
+				else:
 					vpp = format_eng_str(vZone['vpp'],2)
-					strZonef1 = format_eng_str(vZone['f_min'],0)+"Hz"
-					strZonef2 = format_eng_str(vZone['f_max'],0)+"Hz"
 					text = f"AC Ripple: {vpp}Vpp in {strZonef1} to {strZonef2}"
-					plt.text(area['xTxt'], yTop*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
+				plt.text(area['xTxt'], yTop*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
 				f_min_plot = vZone['f_min'] / factor
 				f_max_plot = vZone['f_max'] / factor
 				plt.axvspan(f_min_plot, f_max_plot, alpha=0.15, color=ZoneColor)
