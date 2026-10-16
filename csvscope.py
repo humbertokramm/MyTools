@@ -86,6 +86,39 @@ from engMath import *
 from pulse_mask import G703Clock2048kHz, G703Data2048kbits
 
 
+def eng_ticks(ax, eixo='x'):
+	"""Escreve os ticks em notacao de engenharia: 100k, 1M, 1G.
+
+	Feito para eixo log, onde nao existe um prefixo unico que sirva: um
+	espectro de 50 kHz a 1 GHz sao mais de quatro decadas, e dividir tudo por
+	1e6 para escrever MHz so trocaria 10^5..10^9 por 10^-1..10^3. Aqui a
+	escala nao muda -- muda so o texto do tick, entao os dados, a mascara e as
+	zonas continuam na unidade de base.
+
+	Args:
+		ax: eixo do matplotlib.
+		eixo (str, optional): 'x' ou 'y'. Padrao e 'x'.
+	"""
+	from matplotlib.ticker import FuncFormatter, NullFormatter
+
+	def _fmt(v, _):
+		if v <= 0: return ''
+		m = format_eng_str(v, 3, string=False)
+		if not isinstance(m, dict): return ''
+		val = m['value']
+		txt = f"{val:.0f}" if abs(val - round(val)) < 1e-6 else f"{val:g}"
+		return txt + m['unit']
+
+	a = ax.xaxis if eixo == 'x' else ax.yaxis
+	ini, fim = (ax.get_xlim() if eixo == 'x' else ax.get_ylim())
+	a.set_major_formatter(FuncFormatter(_fmt))
+	# Num eixo largo os minor ticks sao 9 por decada e rotular todos embola.
+	# Num eixo estreito o matplotlib so coloca minor tick, entao sem rotulo
+	# nenhum o eixo ficaria vazio.
+	decadas = np.log10(fim / ini) if ini > 0 and fim > 0 else 0
+	a.set_minor_formatter(FuncFormatter(_fmt) if decadas < 1.5 else NullFormatter())
+
+
 def fft_mask(pontos, nome='', cor='r'):
 	"""Monta uma mascara de espectro a partir dos vertices do grafico.
 
@@ -1659,7 +1692,9 @@ class CsvScope:
 		plt.xlabel("Domínio da Frequência [Hz]")
 		if axe == 'log':
 			plt.semilogx()
+			eixoEng = True
 		else:
+			eixoEng = False
 			symbol = format_eng_str(max(max(s['fft']['f']) for s in grupo))[-1]
 			factor = ENG_NOTATION[symbol]
 			plt.xlabel("Domínio da Frequência ["+symbol+"Hz]")
@@ -1786,6 +1821,10 @@ class CsvScope:
 				for note in s['draw']:
 					a = self._draw_arrow(note,[0,0])
 					plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],ha=a['ha'],va=a['va'],arrowprops=a['props'])
+
+		# Depois de tudo desenhado: o formatter olha o xlim para decidir se
+		# rotula os minor ticks.
+		if eixoEng: eng_ticks(plt.gca(), 'x')
 
 		self.save_figure(plt,out,path,t,transparent)
 		plt.show(block=False)
