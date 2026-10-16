@@ -6,6 +6,11 @@
 	Indexa os designadores presentes na camada de texto do PDF (lado de cima e
 	lado de baixo), permite buscar um componente e dar zoom imediato nele.
 
+	Se o PDF também tiver uma página de *PCB Print* (printout do Altium), os
+	pads de cada componente são lidos dos marcadores invisíveis ``PA``/``CO``
+	e cruzados com uma netlist Protel (``.NET``) procurada ao lado do PDF —
+	assim dá para ver a net de cada pino e pular direto no pad de GND.
+
 **Uso**
 
 	Interface gráfica (busca interativa)::
@@ -16,6 +21,8 @@
 
 		python pcbzoom.py "Output_Job.PDF" -d R1234
 		python pcbzoom.py "Output_Job.PDF" -d R1234 -o r1234.png
+		python pcbzoom.py "Output_Job.PDF" -d CN29 --gnd     # pinos de terra
+		python pcbzoom.py "Output_Job.PDF" -d CN29 --pinos   # pinos e nets
 		python pcbzoom.py "Output_Job.PDF" --list U
 
 **Teclas (GUI)**
@@ -25,6 +32,8 @@
 	- ``arrastar``     : pan
 	- ``+`` / ``-``    : zoom in/out
 	- ``0``            : enquadra a página inteira
+	- ``G``            : pula no primeiro pad de GND do componente
+	- ``duplo clique`` : no painel de pinos, pula no pad daquele pino
 	- ``Z``            : volta ao zoom do componente localizado
 	- ``F3`` / ``Shift+F3``: próxima/anterior ocorrência do designador
 	- ``Tab``          : alterna lado de cima / lado de baixo
@@ -36,6 +45,7 @@
 """
 
 import argparse
+import collections
 import os
 import re
 import sys
@@ -70,19 +80,174 @@ def _rect_key(rect):
 	return (round(rect.x0, 1), round(rect.y0, 1), round(rect.x1, 1), round(rect.y1, 1))
 
 
-class Lado:
-	"""Um lado da placa: uma pagina do PDF com seus designadores indexados."""
+class Netlist:
+	"""Netlist Protel (.NET): associa cada pino de componente a uma net."""
 
-	def __init__(self, doc, numero, nome):
+	def __init__(self, caminho):
+		self.caminho = caminho
+		self.refs = {}                # ref -> {pino: net}
+		self.nets = {}                # net -> [(ref, pino), ...]
+		self._carregar()
+
+	def _carregar(self):
+		with open(self.caminho, encoding='latin-1', errors='replace') as fh:
+			linhas = [l.strip() for l in fh]
+		i, n = 0, len(linhas)
+		while i < n:
+			if linhas[i] == '(':
+				net = linhas[i + 1] if i + 1 < n else ''
+				i += 2
+				while i < n and linhas[i] != ')':
+					if '-' in linhas[i]:
+						ref, pino = linhas[i].rsplit('-', 1)
+						self.refs.setdefault(ref, {})[pino] = net
+						self.nets.setdefault(net, []).append((ref, pino))
+					i += 1
+			i += 1
+
+	def net(self, ref, pino):
+		return self.refs.get(ref, {}).get(pino, '')
+
+	def pinos(self, ref):
+		return self.refs.get(ref, {})
+
+
+def _eh_gnd(net):
+	"""Heuristica: a net e um terra?"""
+	u = (net or '').upper()
+	return bool(re.search(r'(^|[^A-Z])(A|D|P|F|X|E|SIG|PWR)?GND\d*([^A-Z]|$)', u)
+				or re.match(r'^V?SS\d*$', u) or 'GROUND' in u)
+
+
+class Pads:
+	"""Pads do PCB Print, lidos dos marcadores 'PA<ref><pino>' / 'CO<ref>'.
+
+	O Altium escreve, na pagina de printout, um texto invisivel sobre cada pad
+	('PA' + designador + numero do pino, com zeros a esquerda) e sobre cada
+	componente ('CO' + designador). No fluxo do PDF os pads de um componente
+	vem agrupados logo antes do marcador 'CO' dele, o que permite separar o
+	designador do numero do pino sem ambiguidade.
+	"""
+
+	def __init__(self, lado, universo=()):
+		self.lado = lado
+		self.comps = {}               # ref -> {'pos': Point, 'pinos': {pino: Rect}, 'incerto': bool}
+		self.universo = set(universo)
+		self.larguras = collections.Counter()   # largura do campo de pino
+		self._indexar()
+
+	@staticmethod
+	def _pino(texto):
+		"""Normaliza o numero de pino ('01' -> '1', '0S' -> 'S')."""
+		return texto.lstrip('0') or texto or '0'
+
+	def _marcadores(self):
+		"""Marcadores PA/CO na ordem do fluxo da pagina."""
+		for b in self.lado.page.get_text('rawdict')['blocks']:
+			if b.get('type'):
+				continue
+			for ln in b.get('lines', ()):
+				for s in ln['spans']:
+					txt = ''.join(ch['c'] for ch in s['chars']).strip()
+					if txt.startswith(('PA', 'CO')) and len(txt) > 2:
+						yield txt[:2], txt[2:], fitz.Rect(s['bbox'])
+
+	def _registrar(self, ref, pendentes, incerto=False, medir=False):
+		c = self.comps.setdefault(ref, {'pos': None, 'pinos': {}, 'incerto': False})
+		c['incerto'] = c['incerto'] or incerto
+		for corpo, r in pendentes:
+			if medir:
+				self.larguras[len(corpo) - len(ref)] += 1
+			c['pinos'].setdefault(self._pino(corpo[len(ref):]), r)
+
+	@staticmethod
+	def _larguras(pads, ref):
+		"""Larguras do campo de pino dos pads que comecam por 'ref'."""
+		c = collections.Counter()
+		for corpo, _r in pads:
+			if corpo.startswith(ref) and corpo[len(ref):].isdigit():
+				c[len(corpo) - len(ref)] += 1
+		return c
+
+	@staticmethod
+	def _separar(pads, ref):
+		"""Separa de 'pads' os que comecam pelo designador 'ref'."""
+		meus = [(c, r) for c, r in pads if c.startswith(ref)]
+		resto = [(c, r) for c, r in pads if not c.startswith(ref)]
+		return meus, resto
+
+	def _resolver_orfaos(self, orfaos, com_co):
+		"""Pads de um componente sem marcador 'CO' proprio.
+
+		Sao os casos em que 'PAC101' tanto pode ser C1 pino 01 quanto C10
+		pino 1. Descarta os designadores que ja tem 'CO' proprio (os pads
+		deles ja foram agrupados) e, entre os que sobram, prefere o que
+		produz a largura de pino tipica do desenho; se mais de um candidato
+		serve, o componente fica marcado como incerto.
+		"""
+		if not orfaos:
+			return
+		comum = os.path.commonprefix([c for c, _r in orfaos])
+		cands = [ref for ref in self.universo
+				 if comum.startswith(ref) and all(c.startswith(ref) for c, _r in orfaos)]
+		livres = [ref for ref in cands if ref not in com_co]
+		cands = livres or cands
+		if not cands:
+			return
+		larg = self.larguras.most_common(1)[0][0] if self.larguras else 2
+		certos = [r for r in cands if len(orfaos[0][0]) - len(r) == larg]
+		cands.sort(key=lambda ref: (len(orfaos[0][0]) - len(ref) != larg, -len(ref)))
+		self._registrar(cands[0], orfaos, incerto=len(certos) != 1)
+
+	def _indexar(self):
+		pend, orfaos, com_co = [], [], set()
+		for tipo, corpo, r in self._marcadores():
+			if tipo == 'PA':
+				pend.append((corpo, r))
+				continue
+			ref = corpo
+			meus, sobra = self._separar(pend, ref)
+			# o que sobra e de um vizinho sem marcador 'CO'; so da para decidir
+			# de quem e depois de conhecer todos os 'CO' da pagina
+			if sobra:
+				orfaos.append(sobra)
+			self._registrar(ref, meus, medir=True)
+			self.comps[ref]['pos'] = fitz.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
+			com_co.add(ref)
+			pend = []
+		for sobra in orfaos:
+			self._resolver_orfaos(sobra, com_co)
+		# o fim da pagina e a segunda passada do printout: os mesmos pads
+		# desenhados de novo, que so completam quem ainda nao tem pino
+		for ref in sorted({r for c, _ in pend for r in self.comps if c.startswith(r)},
+						  key=len, reverse=True):
+			meus, pend = self._separar(pend, ref)
+			self._registrar(ref, meus)
+
+	def pinos(self, ref):
+		c = self.comps.get(ref)
+		return c['pinos'] if c else {}
+
+	def incerto(self, ref):
+		c = self.comps.get(ref)
+		return bool(c and c['incerto'])
+
+
+class Lado:
+	"""Uma pagina do PDF: lado da montagem ou o printout de PCB."""
+
+	def __init__(self, doc, numero, nome, tipo='montagem'):
 		self.doc = doc
 		self.numero = numero          # indice da pagina (0-based)
-		self.nome = nome              # 'Top', 'Bottom' ou titulo do bookmark
+		self.nome = nome              # 'Top', 'Bottom', 'PCB Print'
+		self.tipo = tipo              # 'montagem' ou 'print'
 		self.page = doc[numero]
 		self.rect = fitz.Rect(self.page.rect)
 		self.itens = OrderedDict()    # designador -> [fitz.Rect, ...]
 		self.colunas = []             # [(rotulo, x), ...]
 		self.linhas = []              # [(rotulo, y), ...]
-		self._indexar()
+		if tipo == 'montagem':
+			self._indexar()
 
 	def _indexar(self):
 		cols, rows = {}, {}
@@ -114,11 +279,66 @@ class Lado:
 class Projeto:
 	"""PDF de montagem com um ou mais lados indexados."""
 
-	def __init__(self, caminho):
+	def __init__(self, caminho, netlist=None):
 		self.caminho = caminho
 		self.doc = fitz.open(caminho)
-		self.lados = [Lado(self.doc, i, self._nome_pagina(i))
-					  for i in range(self.doc.page_count)]
+		self.lados = []
+		self.print_lado = None
+		for i in range(self.doc.page_count):
+			if self._eh_printout(i):
+				lado = Lado(self.doc, i, 'PCB Print', tipo='print')
+				self.print_lado = lado
+			else:
+				lado = Lado(self.doc, i, self._nome_pagina(i))
+			self.lados.append(lado)
+
+		self.netlist = None
+		caminho_net = netlist or self._achar_netlist()
+		if caminho_net and os.path.isfile(caminho_net):
+			try:
+				self.netlist = Netlist(caminho_net)
+			except Exception as erro:            # netlist e um extra: nao pode derrubar a GUI
+				print('pcbzoom: netlist ignorada (%s)' % erro, file=sys.stderr)
+
+		self.pads = None
+		if self.print_lado is not None:
+			universo = set()
+			for lado in self.lados:
+				universo.update(lado.itens)
+			if self.netlist:
+				universo.update(self.netlist.refs)
+			self.pads = Pads(self.print_lado, universo)
+
+	def _eh_printout(self, i):
+		"""Pagina de PCB printout: o texto e dominado pelos marcadores PA/CO."""
+		palavras = self.doc[i].get_text('words')
+		if len(palavras) < 200:
+			return False
+		marc = sum(1 for w in palavras if w[4].startswith(('PA', 'CO')))
+		return marc > 0.5 * len(palavras)
+
+	def _achar_netlist(self):
+		"""Procura uma netlist Protel (.NET) ao lado do PDF."""
+		raiz = os.path.dirname(os.path.abspath(self.caminho))
+		achados = []
+		for pasta, _dirs, arquivos in os.walk(raiz):
+			for nome in arquivos:
+				if nome.lower().endswith('.net'):
+					achados.append(os.path.join(pasta, nome))
+		achados.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+		return achados[0] if achados else None
+
+	def pinos(self, ref):
+		"""[(pino, net, rect_do_pad)] do componente, ordenado por pino."""
+		ref = _norm(ref)
+		pads = self.pads.pinos(ref) if self.pads else {}
+		nets = self.netlist.pinos(ref) if self.netlist else {}
+		nomes = set(pads) | set(nets)
+
+		def chave(p):
+			return (0, int(p), '') if p.isdigit() else (1, 0, p)
+
+		return [(p, nets.get(p, ''), pads.get(p)) for p in sorted(nomes, key=chave)]
 
 	def _nome_pagina(self, i):
 		"""Deduz o nome do lado pelo bookmark da pagina ('Top'/'Bottom')."""
@@ -202,6 +422,8 @@ class App:
 		self.indice = 0
 		self.alvo = None           # (lado, rect) em destaque
 		self.zoom_alvo = None
+		self.pinos = []             # [(pino, net, rect_do_pad), ...] do componente
+		self.pino_alvo = None       # (pino, net) em destaque
 		self.msg = ''               # aviso transitorio na barra de status
 		self.n_lista = 0
 		self._img = None
@@ -252,6 +474,20 @@ class App:
 		self.lista.bind('<Return>', lambda e: self.localizar())
 		corpo.add(esq, weight=0)
 
+		# painel de pinos: pino, net e um salto para o pad no PCB Print
+		pinos = ttk.Frame(corpo)
+		self.rotulo_pinos = ttk.Label(pinos, text='Pinos', anchor='w', padding=(4, 2))
+		self.rotulo_pinos.pack(side='top', fill='x')
+		self.lista_pinos = tk.Listbox(pinos, font=('Consolas', 10), activestyle='none',
+									  exportselection=False, width=30)
+		sbp = ttk.Scrollbar(pinos, orient='vertical', command=self.lista_pinos.yview)
+		self.lista_pinos.configure(yscrollcommand=sbp.set)
+		sbp.pack(side='right', fill='y')
+		self.lista_pinos.pack(side='left', fill='both', expand=True)
+		self.lista_pinos.bind('<Double-Button-1>', lambda e: self.ir_para_pino())
+		self.lista_pinos.bind('<Return>', lambda e: self.ir_para_pino())
+		corpo.add(pinos, weight=0)
+
 		dir_ = ttk.Frame(corpo)
 		self.canvas = tk.Canvas(dir_, bg='#202020', highlightthickness=0)
 		self.canvas.pack(fill='both', expand=True)
@@ -277,6 +513,7 @@ class App:
 		r.bind('<KP_Subtract>', lambda e: self.aplicar_zoom(1 / 1.25))
 		r.bind('<Key-0>', lambda e: self.enquadrar())
 		r.bind('<Key-z>', lambda e: self.ir_para(self.indice))
+		r.bind('<Key-g>', lambda e: self.ir_para_gnd())
 		r.bind('<F3>', lambda e: self.proxima(1))
 		r.bind('<Shift-F3>', lambda e: self.proxima(-1))
 		r.bind('<Tab>', self._tab)
@@ -321,13 +558,77 @@ class App:
 		self.achados = self.prj.buscar(nome)
 		if not self.achados:
 			self.msg = '%s: nao encontrado no PDF' % nome
+			self._preencher_pinos(nome)
 			self.agendar()
 			return
 		self.msg = ''
+		self.pino_alvo = None
+		self._preencher_pinos(nome)
 		self.indice = 0
 		self.ir_para(0)
 		if foco:
 			self.busca.select_range(0, 'end')
+
+	# ------------------------------------------------------------ pinos
+	def _preencher_pinos(self, ref):
+		"""Lista os pinos do componente com a net de cada um."""
+		self.pinos = self.prj.pinos(ref)
+		self.lista_pinos.delete(0, 'end')
+		gnd = 0
+		for i, (pino, net, rect) in enumerate(self.pinos):
+			marca = '*' if _eh_gnd(net) else (' ' if rect else '?')
+			self.lista_pinos.insert('end', '%s%-5s %s' % (marca, pino, net or '-'))
+			if _eh_gnd(net):
+				gnd += 1
+				self.lista_pinos.itemconfigure(i, foreground='#0a7d24')
+			elif not rect:
+				self.lista_pinos.itemconfigure(i, foreground='#999999')
+		texto = 'Pinos de %s' % ref if self.pinos else 'Pinos'
+		if gnd:
+			texto += '  -  %d em GND (tecla G)' % gnd
+		if self.prj.pads and self.prj.pads.incerto(ref):
+			texto += '  [pads incertos]'
+		self.rotulo_pinos.configure(text=texto)
+
+	def ir_para_pino(self, indice=None):
+		"""Centraliza o pad do pino selecionado, na pagina do PCB Print."""
+		if indice is None:
+			sel = self.lista_pinos.curselection()
+			if not sel:
+				return
+			indice = sel[0]
+		if indice >= len(self.pinos):
+			return
+		pino, net, rect = self.pinos[indice]
+		if rect is None:
+			self.msg = 'pino %s: sem pad no PCB Print' % pino
+			self.agendar()
+			return
+		self.msg = ''
+		self.pino_alvo = (pino, net)
+		self.lista_pinos.selection_clear(0, 'end')
+		self.lista_pinos.selection_set(indice)
+		self.lista_pinos.see(indice)
+		self.lado = self.prj.print_lado
+		self.var_lado.set(self.lado.nome)
+		self.alvo = (self.lado, rect)
+		self.achados = [(self.lado, rect)]
+		self.indice = 0
+		cw = max(self.canvas.winfo_width(), 200)
+		ch = max(self.canvas.winfo_height(), 200)
+		w = max(rect.width, 1.0) * PAD_FACTOR + PAD_PT
+		h = max(rect.height, 1.0) * PAD_FACTOR + PAD_PT
+		self.zoom = max(ZOOM_MIN, min(ZOOM_MAX, min(cw / w, ch / h)))
+		self.centro = ((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+		self.agendar()
+
+	def ir_para_gnd(self):
+		"""Pula para o primeiro pino de terra do componente localizado."""
+		for i, (pino, net, rect) in enumerate(self.pinos):
+			if _eh_gnd(net) and rect is not None:
+				return self.ir_para_pino(i)
+		self.msg = 'sem pino de GND com pad conhecido'
+		self.agendar()
 
 	def proxima(self, passo):
 		if len(self.achados) > 1:
@@ -338,6 +639,8 @@ class App:
 		if not self.achados:
 			return
 		lado, rect = self.achados[i % len(self.achados)]
+		if lado.tipo != 'print':
+			self.pino_alvo = None
 		self.lado = lado
 		self.var_lado.set(lado.nome)
 		self.alvo = (lado, rect)
@@ -458,9 +761,16 @@ class App:
 					(y0 + y1) / 2 + dy * (m + 34 + (y1 - y0) / 2),
 					fill='#ff2d2d', width=2)
 			nome = _norm(self.var_busca.get())
-			ocorr = ' (%d/%d)' % (self.indice + 1, len(self.achados)) if len(self.achados) > 1 else ''
-			info = '%s%s | lado %s | zona %s | zoom %.0f%%' % (
-				nome, ocorr, lado.nome, lado.zona(r) or '?', self.zoom * 100)
+			if self.pino_alvo and lado.tipo == 'print':
+				pino, net = self.pino_alvo
+				nome = '%s pino %s' % (nome, pino)
+				info = '%s | net %s%s | %s | zoom %.0f%%' % (
+					nome, net or '(sem net)', '  <<< GND' if _eh_gnd(net) else '',
+					lado.nome, self.zoom * 100)
+			else:
+				ocorr = ' (%d/%d)' % (self.indice + 1, len(self.achados)) if len(self.achados) > 1 else ''
+				info = '%s%s | lado %s | zona %s | zoom %.0f%%' % (
+					nome, ocorr, lado.nome, lado.zona(r) or '?', self.zoom * 100)
 			self.canvas.create_text(x1 + m + 8, y0 - m - 8, text=nome, anchor='sw',
 									fill='#ff2d2d', font=('Consolas', 13, 'bold'))
 		if self.msg:
@@ -504,6 +814,12 @@ def main(argv=None):
 	ap.add_argument('-z', '--zoom', type=float, help='zoom do recorte (pontos->pixels)')
 	ap.add_argument('-l', '--list', dest='listar', nargs='?', const='',
 					help='lista os designadores (opcionalmente filtrados por trecho)')
+	ap.add_argument('-p', '--pinos', action='store_true',
+					help='lista os pinos do componente com a net de cada um')
+	ap.add_argument('-g', '--gnd', action='store_true',
+					help='lista so os pinos de terra do componente')
+	ap.add_argument('-n', '--netlist',
+					help='netlist Protel (.NET); por padrao procura ao lado do PDF')
 	args = ap.parse_args(argv)
 
 	caminho = args.pdf
@@ -522,7 +838,7 @@ def main(argv=None):
 	if not os.path.isfile(caminho):
 		sys.exit('pcbzoom: arquivo nao encontrado: %s' % caminho)
 
-	prj = Projeto(caminho)
+	prj = Projeto(caminho, netlist=args.netlist)
 
 	if args.listar is not None:
 		for nome, lados in prj.designadores(args.listar).items():
@@ -537,6 +853,22 @@ def main(argv=None):
 			print('%s: lado %s, zona %s, pagina %d, x=%.1f y=%.1f'
 				  % (_norm(args.designador), lado.nome, lado.zona(r) or '?',
 					 lado.numero + 1, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2))
+		if args.pinos or args.gnd:
+			pinos = prj.pinos(args.designador)
+			if not pinos:
+				print('   (sem pinos: faltam a netlist e/ou a pagina de PCB Print)')
+			for pino, net, rect in pinos:
+				if args.gnd and not _eh_gnd(net):
+					continue
+				onde = ('pad em x=%.0f y=%.0f' % ((rect.x0 + rect.x1) / 2,
+												  (rect.y0 + rect.y1) / 2)
+						if rect is not None else 'sem pad no PCB Print')
+				print('   pino %-5s %-28s %s%s' % (pino, net or '-', onde,
+													'   <<< GND' if _eh_gnd(net) else ''))
+			if prj.pads and prj.pads.incerto(_norm(args.designador)):
+				print('   atencao: os pads deste componente foram deduzidos e podem estar trocados')
+			if not args.saida:
+				return 0
 		if args.saida:
 			lado, r = achados[0]
 			dados = prj.recortar(lado, r, zoom=args.zoom)

@@ -128,12 +128,18 @@ python serializefile.py COM3 -p     # abre PuTTY após o envio
 python pcbzoom.py "Output_Job.PDF"                 # GUI: digita o designador e dá zoom
 python pcbzoom.py "Output_Job.PDF" -d R1234        # abre já posicionado no componente
 python pcbzoom.py "Output_Job.PDF" -d R1234 -o r1234.png   # só exporta o recorte
+python pcbzoom.py "Output_Job.PDF" -d CN29 --gnd   # quais pinos são GND
 python pcbzoom.py "Output_Job.PDF" --list CN       # lista os designadores e o lado
 ```
 
 Na GUI: `Enter` localiza, roda do mouse dá zoom, arrastar faz pan, `Tab` troca de lado,
 `F3` vai para a próxima ocorrência, `0` enquadra a página e `Ctrl+S` salva a vista em PNG.
 A barra de status mostra o lado (Top/Bottom) e a zona da moldura (ex.: `E2`).
+
+**Pinos e GND.** Inclua no OutJob, além do Draftsman, um *PCB Print* e gere uma netlist
+Protel (`.NET`) na mesma pasta. O `pcbzoom` lê os marcadores invisíveis de pad do printout,
+cruza com a netlist e mostra a net de cada pino; `G` pula direto no primeiro pad de terra e
+o duplo clique no painel de pinos pula no pad escolhido.
 
 ### Instalar o hook commit-msg do Gerrit (Change-Id automático)
 
