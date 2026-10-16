@@ -81,6 +81,7 @@ SC -->|captura CSV| CS
 | `intranetVersionChecker.py` | `check_update`, `update_local` | Verifica e baixa versões de firmware da intranet |
 | `updateLibScript.py` | `check_site`, `check_and_pull` | Atualiza repositórios Git locais |
 | `registrarhook.py` | CLI | Instala o hook `commit-msg` do Gerrit num repo (Change-Id automático); baixa via `pscp`/Pageant com fallback HTTPS |
+| `pcbzoom.py` | CLI / GUI | Apontador de componentes no PDF de montagem: busca o designador nos lados de cima e de baixo e dá zoom nele |
 
 ---
 
@@ -120,6 +121,19 @@ CS.hold()
 python serializefile.py COM3        # porta específica
 python serializefile.py COM3 -p     # abre PuTTY após o envio
 ```
+
+### Localizar um componente no PDF de montagem
+
+```bash
+python pcbzoom.py "Output_Job.PDF"                 # GUI: digita o designador e dá zoom
+python pcbzoom.py "Output_Job.PDF" -d R1234        # abre já posicionado no componente
+python pcbzoom.py "Output_Job.PDF" -d R1234 -o r1234.png   # só exporta o recorte
+python pcbzoom.py "Output_Job.PDF" --list CN       # lista os designadores e o lado
+```
+
+Na GUI: `Enter` localiza, roda do mouse dá zoom, arrastar faz pan, `Tab` troca de lado,
+`F3` vai para a próxima ocorrência, `0` enquadra a página e `Ctrl+S` salva a vista em PNG.
+A barra de status mostra o lado (Top/Bottom) e a zona da moldura (ex.: `E2`).
 
 ### Instalar o hook commit-msg do Gerrit (Change-Id automático)
 
