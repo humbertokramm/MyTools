@@ -138,6 +138,25 @@ def format_eng_str(number, decimals=2, string=True):
     }
 
 
+def eng_num(number, decimals=3):
+    """Engineering notation without the unit symbol: ``5e-3`` -> ``'5m'``.
+
+    Args:
+        number (float): Value to convert.
+        decimals (int, optional): Working precision. Defaults to ``3``.
+
+    Returns:
+        str: Mantissa plus prefix, with trailing zeros dropped, so that
+            ``5e-3`` reads ``'5m'`` and not ``'5.000 m'``.
+    """
+    m = format_eng_str(number, decimals, string=False)
+    if not isinstance(m, dict):
+        return '0'
+    v = m['value']
+    txt = f'{v:.0f}' if abs(v - round(v)) < 1e-6 else f'{v:g}'
+    return txt + m['unit']
+
+
 def format_value(number, series, axis, decimals=2):
     """Format a numeric value with engineering notation and the correct unit.
 

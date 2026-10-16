@@ -103,11 +103,7 @@ def eng_ticks(ax, eixo='x'):
 
 	def _fmt(v, _):
 		if v <= 0: return ''
-		m = format_eng_str(v, 3, string=False)
-		if not isinstance(m, dict): return ''
-		val = m['value']
-		txt = f"{val:.0f}" if abs(val - round(val)) < 1e-6 else f"{val:g}"
-		return txt + m['unit']
+		return eng_num(v)
 
 	a = ax.xaxis if eixo == 'x' else ax.yaxis
 	ini, fim = (ax.get_xlim() if eixo == 'x' else ax.get_ylim())
@@ -117,6 +113,36 @@ def eng_ticks(ax, eixo='x'):
 	# nenhum o eixo ficaria vazio.
 	decadas = np.log10(fim / ini) if ini > 0 and fim > 0 else 0
 	a.set_minor_formatter(FuncFormatter(_fmt) if decadas < 1.5 else NullFormatter())
+
+
+def channel_tags(bw=None, escala=None):
+	"""Etiqueta com a condicao do canal: ``'[noBW][5mV/div]'``.
+
+	Args:
+		bw (str): valor do campo ``# BW:`` do CSV.
+		escala (str): valor do campo ``# vertical_scale:``, ex ``'+5E-03 V/div'``.
+
+	Returns:
+		str: etiqueta pronta, ou '' quando nenhum dos dois veio no arquivo.
+
+	Note:
+		A banda sai so como ``[BW]`` ou ``[noBW]``, sem o valor: o que importa
+		na leitura do ruido e se havia limitacao, nao qual. Os osciloscopios
+		nao respondem igual -- o Keysight devolve ON/OFF do BWLimit e o
+		Tektronix devolve a banda em si, ou FUL quando esta cheia.
+	"""
+	tags = ''
+	v = (bw or '').strip().upper()
+	if v and v not in ('NONE',):
+		tags += '[noBW]' if v in ('OFF', '0', 'FUL', 'FULL') else '[BW]'
+	if escala:
+		bruto = escala.upper().replace('V/DIV', '').strip()
+		try:
+			tags += f'[{eng_num(abs(float(bruto)))}V/div]'
+		except ValueError:
+			# formato inesperado: melhor mostrar cru do que esconder
+			tags += f'[{escala.strip()}]'
+	return tags
 
 
 def fft_mask(pontos, nome='', cor='r'):
@@ -356,6 +382,8 @@ class CsvScope:
 	def load_usb_visa(self,file):
 		instrumento = None
 		data = None
+		bw = None
+		escala = None
 		
 		# Ler cabeçalho manualmente
 		with open(file, 'r', encoding='latin-1') as f:
@@ -370,10 +398,20 @@ class CsvScope:
 				if linha.startswith("# Data da captura:"):
 					data_raw = linha.split(": ", 1)[1].strip()
 					data = normalize_data(data_raw)
+
+				# Condicao do canal na hora da captura. Sem isso duas medidas do
+				# mesmo ponto parecem iguais mesmo tendo sido feitas uma com e
+				# outra sem limitacao de banda.
+				if linha.startswith("# BW:"):
+					bw = linha.split(":", 1)[1].strip()
+				if linha.startswith("# vertical_scale:"):
+					escala = linha.split(":", 1)[1].strip()
 		
 		# Ler dataframe ignorando comentários
 		df = pd.read_csv(file, comment="#", encoding='latin-1')
 		df.columns = ['in s',"ch1 in V"]
+		tags = channel_tags(bw, escala)
+		if tags: instrumento = f'{instrumento} {tags}'
 		return df, instrumento, data
 
 	def read_file(self, f,data):
@@ -1758,7 +1796,8 @@ class CsvScope:
 		# a mascara. Pelo yMax dos dados elas se amontoariam rente ao eixo X.
 		yTop = plt.gca().get_ylim()[1]
 
-		dados = grupo[0]['data'] if not varias else 'None'
+		# Varias series: vale a ultima, mesma logica da mascara.
+		dados = grupo[-1]['data']
 		if dados != 'None':
 			plt.text(area['xCenter'], -yTop / 40, dados, ha='center', fontsize=8)
 
