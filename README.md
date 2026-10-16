@@ -136,6 +136,15 @@ Na GUI: `Enter` localiza, roda do mouse dá zoom, arrastar faz pan, `Tab` troca 
 `F3` vai para a próxima ocorrência, `0` enquadra a página e `Ctrl+S` salva a vista em PNG.
 A barra de status mostra o lado (Top/Bottom) e a zona da moldura (ex.: `E2`).
 
+**Junto com um script de bancada.** `pcbzoom.mostrar("C1052")` abre a janela na primeira
+chamada e, nas seguintes, pula direto no componente — útil para acompanhar uma varredura de
+pontos de medição sem reabrir o PDF a cada vez (aceita `"C1052 gnd"` e `"I11 pino 45"`):
+
+```python
+import pcbzoom
+pcbzoom.mostrar(s["loc"], pdf=PDF_MONTAGEM)   # antes de cada captura
+```
+
 **Pinos e GND.** Inclua no OutJob, além do Draftsman, um *PCB Print* e gere uma netlist
 Protel (`.NET`) na mesma pasta. O `pcbzoom` lê os marcadores invisíveis de pad do printout,
 cruza com a netlist e projeta os pads de volta na vista de montagem — os pinos aparecem

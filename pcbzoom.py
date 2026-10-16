@@ -27,6 +27,14 @@
 		python pcbzoom.py "Output_Job.PDF" -d CN29 --pinos   # pinos e nets
 		python pcbzoom.py "Output_Job.PDF" --list U
 
+	Acompanhando um script de bancada: a janela fica aberta e pula no
+	componente a cada ponto de medicao (o PDF e lido uma vez so)::
+
+		import pcbzoom
+		pcbzoom.mostrar('C1052', pdf=PDF)   # abre a janela na 1a chamada
+		pcbzoom.mostrar('C1052 gnd')        # ja no pad de terra
+		pcbzoom.mostrar('I11 pino 45')
+
 **Teclas (GUI)**
 
 	- ``Enter``        : localiza o designador digitado
@@ -57,7 +65,9 @@ from collections import OrderedDict
 try:
 	import fitz  # PyMuPDF
 except ImportError:  # pragma: no cover
-	sys.exit('pcbzoom: modulo "pymupdf" nao encontrado. Instale com: pip install pymupdf')
+	fitz = None   # so faz falta na hora de abrir o PDF; importar o modulo nao quebra
+
+FALTA_PYMUPDF = 'pcbzoom: modulo "pymupdf" nao encontrado. Instale com: pip install pymupdf'
 
 
 # Designador de componente: prefixo de letras + numero (R1, CN52, BRK12, U7A)
@@ -371,6 +381,8 @@ class Projeto:
 	"""PDF de montagem com um ou mais lados indexados."""
 
 	def __init__(self, caminho, netlist=None):
+		if fitz is None:
+			raise RuntimeError(FALTA_PYMUPDF)
 		self.caminho = caminho
 		self.doc = fitz.open(caminho)
 		self.lados = []
@@ -1006,8 +1018,122 @@ class App:
 			fh.write(dados)
 		messagebox.showinfo('pcbzoom', 'Vista salva em:\n%s' % destino)
 
+	# ------------------------------------------------------------ servidor
+	def escutar(self, porta):
+		"""Aceita designadores por socket local, para scripts de bancada."""
+		import queue
+		import socket
+		import threading
+		self.fila = queue.Queue()
+
+		def servir():
+			s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+			s.bind(('127.0.0.1', porta))     # so aceita conexao da propria maquina
+			s.listen(4)
+			while True:
+				try:
+					conexao, _end = s.accept()
+					with conexao:
+						dados = conexao.recv(256).decode('utf-8', 'replace').strip()
+						if dados:
+							self.fila.put(dados)
+						conexao.sendall(b'ok\n')
+				except OSError:
+					break
+
+		threading.Thread(target=servir, daemon=True).start()
+		self._drenar()
+
+	def _drenar(self):
+		"""Aplica, na thread da interface, o que chegou pelo socket."""
+		try:
+			while True:
+				self.comando(self.fila.get_nowait())
+		except Exception:
+			pass
+		self.root.after(100, self._drenar)
+
+	def comando(self, texto):
+		"""Executa um pedido vindo de fora: 'C1052', 'C1052 gnd', 'I11 pino 4'."""
+		partes = texto.split()
+		if not partes:
+			return
+		self.var_busca.set(partes[0])
+		self._filtrar()
+		self.localizar(foco=False)
+		resto = ' '.join(partes[1:]).lower().replace('pino', '').strip()
+		if resto in ('gnd', 'terra'):
+			self.ir_para_gnd()
+		elif resto:
+			for i, (pino, _net, _r) in enumerate(self.pinos):
+				if pino.upper() == resto.upper():
+					self.ir_para_pino(i)
+					break
+		try:
+			self.root.deiconify()
+			self.root.lift()
+		except Exception:
+			pass
+
 	def run(self):
 		self.root.mainloop()
+
+
+# ---------------------------------------------------------------- uso como modulo
+
+PORTA_PADRAO = 51789
+
+
+def mostrar(designador, pdf=None, porta=PORTA_PADRAO, iniciar=True, espera=90):
+	"""Mostra um componente na janela do pcbzoom, abrindo-a se preciso.
+
+	Feita para scripts de bancada: a cada ponto de medicao basta chamar
+	``pcbzoom.mostrar('C1052')`` que a janela pula no componente. A janela
+	fica aberta entre as chamadas, entao o PDF so e lido uma vez.
+
+	:param designador: componente ('C1052'), com pino opcional ('C1052 gnd',
+		'I11 pino 4')
+	:param pdf: PDF de montagem; se omitido, usa a variavel de ambiente
+		``PCBZOOM_PDF``
+	:param iniciar: abre o visualizador se ele ainda nao estiver rodando
+	:return: True se a janela recebeu o pedido
+	"""
+	import socket
+	import subprocess
+	import time
+
+	def envia():
+		with socket.create_connection(('127.0.0.1', porta), timeout=2) as s:
+			s.sendall(('%s\n' % designador).encode('utf-8'))
+			s.recv(16)
+		return True
+
+	try:
+		return envia()
+	except OSError:
+		pass
+	if not iniciar:
+		return False
+
+	caminho = pdf or os.environ.get('PCBZOOM_PDF')
+	if not caminho:
+		raise ValueError('pcbzoom.mostrar: informe o PDF em pdf= ou em PCBZOOM_PDF')
+	criar = {}
+	if os.name == 'nt':      # solta o visualizador do console do script
+		criar['creationflags'] = (getattr(subprocess, 'DETACHED_PROCESS', 0)
+								  | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+	subprocess.Popen([sys.executable, os.path.abspath(__file__), caminho,
+					  '--servidor', str(porta), '-d', str(designador).split()[0]],
+					 **criar)
+	limite = time.time() + espera
+	while time.time() < limite:
+		time.sleep(0.5)
+		try:
+			return envia()
+		except OSError:
+			continue
+	return False
 
 
 # ---------------------------------------------------------------- cli
@@ -1027,6 +1153,9 @@ def main(argv=None):
 					help='lista so os pinos de terra do componente')
 	ap.add_argument('-n', '--netlist',
 					help='netlist Protel (.NET); por padrao procura ao lado do PDF')
+	ap.add_argument('-s', '--servidor', nargs='?', type=int, const=PORTA_PADRAO,
+					help='mantem a janela aberta aceitando designadores por socket '
+						 'local (use pcbzoom.mostrar() no seu script)')
 	args = ap.parse_args(argv)
 
 	caminho = args.pdf
@@ -1085,6 +1214,9 @@ def main(argv=None):
 			return 0
 
 	app = App(prj)
+	if args.servidor:
+		app.escutar(args.servidor)
+		print('pcbzoom: ouvindo em 127.0.0.1:%d' % args.servidor)
 	if args.designador:
 		app.var_busca.set(_norm(args.designador))
 		app.root.after(120, app.localizar)
