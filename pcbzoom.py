@@ -8,8 +8,10 @@
 
 	Se o PDF também tiver uma página de *PCB Print* (printout do Altium), os
 	pads de cada componente são lidos dos marcadores invisíveis ``PA``/``CO``
-	e cruzados com uma netlist Protel (``.NET``) procurada ao lado do PDF —
-	assim dá para ver a net de cada pino e pular direto no pad de GND.
+	e cruzados com uma netlist Protel (``.NET``) procurada ao lado do PDF.
+	Os pads são então projetados **de volta na vista de montagem** (a página
+	do printout em si é ilegível para trabalho de bancada): cada pino aparece
+	marcado em cima do desenho do Draftsman, com os de terra em verde.
 
 **Uso**
 
@@ -32,8 +34,8 @@
 	- ``arrastar``     : pan
 	- ``+`` / ``-``    : zoom in/out
 	- ``0``            : enquadra a página inteira
-	- ``G``            : pula no primeiro pad de GND do componente
-	- ``duplo clique`` : no painel de pinos, pula no pad daquele pino
+	- ``G``            : destaca o primeiro pad de GND do componente
+	- ``duplo clique`` : no painel de pinos, destaca o pad daquele pino
 	- ``Z``            : volta ao zoom do componente localizado
 	- ``F3`` / ``Shift+F3``: próxima/anterior ocorrência do designador
 	- ``Tab``          : alterna lado de cima / lado de baixo
@@ -45,6 +47,7 @@
 """
 
 import argparse
+import bisect
 import collections
 import os
 import re
@@ -233,6 +236,65 @@ class Pads:
 		return bool(c and c['incerto'])
 
 
+def _similaridade(pares, espelho):
+	"""Ajusta A -> B (escala + rotacao + translacao, x espelhado se pedido).
+
+	Devolve (transforma, residuos, escala). Minimos quadrados fechados: com
+	os centroides removidos, a parte rotacional sai direto dos somatorios.
+	"""
+	n = len(pares)
+	sinal = -1 if espelho else 1
+	ax0 = sum(p[0][0] for p in pares) / n
+	ay0 = sum(p[0][1] for p in pares) / n
+	bx0 = sum(p[1][0] for p in pares) / n
+	by0 = sum(p[1][1] for p in pares) / n
+	num_a = num_b = den = 0.0
+	for (ax, ay), (bx, by) in pares:
+		ax, ay = (ax - ax0) * sinal, ay - ay0
+		bx, by = bx - bx0, by - by0
+		num_a += ax * bx + ay * by
+		num_b += ax * by - ay * bx
+		den += ax * ax + ay * ay
+	a = num_a / den if den else 0.0
+	b = num_b / den if den else 0.0
+
+	def transforma(ponto):
+		x, y = (ponto[0] - ax0) * sinal, ponto[1] - ay0
+		return fitz.Point(a * x - b * y + bx0, b * x + a * y + by0)
+
+	res = []
+	for p, q in pares:
+		t = transforma(p)
+		res.append(((t.x - q[0]) ** 2 + (t.y - q[1]) ** 2) ** 0.5)
+	return transforma, res, (a * a + b * b) ** 0.5
+
+
+def _ajuste_robusto(pares, espelho, voltas=8):
+	"""Ajuste descartando os pares que nao seguem o grosso dos pontos.
+
+	Boa parte dos designadores e reposicionada pelo Draftsman e nao serve de
+	referencia; sobra o nucleo que ficou onde estava no PCB.
+	"""
+	atual = list(pares)
+	transforma, res, esc = _similaridade(atual, espelho)
+	for _volta in range(voltas):
+		res_ord = sorted(res)
+		med = res_ord[len(res_ord) // 2]
+		corte = max(med * 2.5, 0.25)
+		novos = [p for p, d in zip(atual, res) if d <= corte]
+		if len(novos) < 30 or len(novos) == len(atual):
+			break
+		atual = novos
+		transforma, res, esc = _similaridade(atual, espelho)
+	res_ord = sorted(res)
+	return {
+		'transforma': transforma,
+		'escala': esc,
+		'pares': len(atual),
+		'residuo': res_ord[len(res_ord) // 2] if res_ord else 0.0,
+	}
+
+
 class Lado:
 	"""Uma pagina do PDF: lado da montagem ou o printout de PCB."""
 
@@ -246,6 +308,9 @@ class Lado:
 		self.itens = OrderedDict()    # designador -> [fitz.Rect, ...]
 		self.colunas = []             # [(rotulo, x), ...]
 		self.linhas = []              # [(rotulo, y), ...]
+		self.ajuste = None            # transformacao do printout nesta pagina
+		self._formas = None
+		self._formas_x = []
 		if tipo == 'montagem':
 			self._indexar()
 
@@ -265,6 +330,32 @@ class Lado:
 				rows.setdefault(up, (r.y0 + r.y1) / 2)
 		self.colunas = sorted(cols.items(), key=lambda kv: kv[1])
 		self.linhas = sorted(rows.items(), key=lambda kv: kv[1])
+
+	def formas(self):
+		"""Centros das figuras preenchidas da pagina (pads, furos, vias).
+
+		Servem de referencia para encaixar os pads projetados do printout em
+		cima do desenho de montagem.
+		"""
+		if self._formas is None:
+			self._formas = []
+			for p in self.page.get_drawings():
+				r = p['rect']
+				if p['type'] == 's' or r.width <= 0 or r.height <= 0:
+					continue
+				if r.width > 40 or r.height > 40:     # corpos e areas grandes nao sao pad
+					continue
+				self._formas.append(fitz.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2))
+			self._formas.sort(key=lambda p: p.x)
+			self._formas_x = [p.x for p in self._formas]
+		return self._formas
+
+	def formas_perto(self, ponto, raio):
+		"""Centros de figura a menos de 'raio' do ponto (busca por faixa em x)."""
+		formas = self.formas()
+		i = bisect.bisect_left(self._formas_x, ponto.x - raio)
+		j = bisect.bisect_right(self._formas_x, ponto.x + raio)
+		return [p for p in formas[i:j] if abs(p.y - ponto.y) <= raio]
 
 	def zona(self, rect):
 		"""Retorna a zona da moldura ('C2') correspondente a um retangulo."""
@@ -308,6 +399,88 @@ class Projeto:
 			if self.netlist:
 				universo.update(self.netlist.refs)
 			self.pads = Pads(self.print_lado, universo)
+			self._alinhar()
+
+	def _alinhar(self):
+		"""Calcula, para cada lado, a transformacao do printout na montagem.
+
+		Os marcadores 'CO' do printout ficam onde esta o designador no PCB, e
+		o mesmo designador aparece na vista de montagem: casando os dois da
+		para projetar os pads do printout sobre o desenho de montagem.
+		"""
+		for lado in self.lados:
+			lado.ajuste = None
+			if lado.tipo != 'montagem':
+				continue
+			pares = []
+			for ref, rects in lado.itens.items():
+				c = self.pads.comps.get(ref)
+				if c and c['pos'] is not None and len(rects) == 1:
+					r = rects[0]
+					pares.append(((c['pos'].x, c['pos'].y),
+								  ((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)))
+			if len(pares) < 30:
+				continue
+			# o lado de baixo e desenhado espelhado; fica o ajuste que explica melhor
+			tentativas = [_ajuste_robusto(pares, esp) for esp in (False, True)]
+			lado.ajuste = min(tentativas, key=lambda a: a['residuo'])
+			self._refinar(lado)
+
+	def _refinar(self, lado, amostra=1500, raio=6.0, passo=0.2):
+		"""Corrige a translacao usando todos os pads do lado de uma vez.
+
+		O ajuste pelos designadores erra alguns pontos, o bastante para
+		apontar o pino vizinho. Como a vista de montagem desenha os pads,
+		projetar a nuvem inteira de pads do printout e votar no deslocamento
+		acerta a posicao: o padrao da placa toda so encaixa de um jeito.
+		"""
+		pontos = []
+		for ref in lado.itens:
+			c = self.pads.comps.get(ref)
+			if not c:
+				continue
+			for rect in c['pinos'].values():
+				pontos.append(lado.ajuste['transforma'](
+					((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)))
+		if len(pontos) < 200:
+			return
+		salto = max(1, len(pontos) // amostra)
+		votos = collections.Counter()
+		for p in pontos[::salto]:
+			for q in lado.formas_perto(p, raio):
+				votos[(round((q.x - p.x) / passo), round((q.y - p.y) / passo))] += 1
+		if not votos:
+			return
+		(dx, dy), n = votos.most_common(1)[0]
+		usados = len(pontos[::salto])
+		if n < usados // 10:
+			return
+		base = lado.ajuste['transforma']
+		lado.ajuste['transforma'] = lambda p, _b=base, _dx=dx * passo, _dy=dy * passo: (
+			fitz.Point(_b(p).x + _dx, _b(p).y + _dy))
+		lado.ajuste['refino'] = (dx * passo, dy * passo, n, usados)
+
+	def pads_na_montagem(self, ref, lado):
+		"""[(pino, net, Point na pagina de montagem)] do componente.
+
+		Devolve tambem a distancia tipica, em pontos, entre cada pad
+		projetado e o pad mais proximo desenhado na vista de montagem: e a
+		confirmacao de que a projecao caiu em cima dos pads certos.
+		"""
+		if lado is None or getattr(lado, 'ajuste', None) is None:
+			return [], None
+		fora, erros = [], []
+		for pino, net, rect in self.pinos(ref):
+			if rect is None:
+				continue
+			c = ((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+			p = lado.ajuste['transforma'](c)
+			fora.append((pino, net, p))
+			perto = lado.formas_perto(p, 6.0)
+			if perto:
+				erros.append(min(((q.x - p.x) ** 2 + (q.y - p.y) ** 2) ** 0.5 for q in perto))
+		erros.sort()
+		return fora, (erros[len(erros) // 2] if erros else None)
 
 	def _eh_printout(self, i):
 		"""Pagina de PCB printout: o texto e dominado pelos marcadores PA/CO."""
@@ -423,6 +596,8 @@ class App:
 		self.alvo = None           # (lado, rect) em destaque
 		self.zoom_alvo = None
 		self.pinos = []             # [(pino, net, rect_do_pad), ...] do componente
+		self.pads_vista = {}        # pino -> Point projetado na vista atual
+		self.pads_erro = None       # distancia tipica da projecao aos pads desenhados
 		self.pino_alvo = None       # (pino, net) em destaque
 		self.msg = ''               # aviso transitorio na barra de status
 		self.n_lista = 0
@@ -559,20 +734,26 @@ class App:
 		if not self.achados:
 			self.msg = '%s: nao encontrado no PDF' % nome
 			self._preencher_pinos(nome)
+			self.pads_vista = {}
 			self.agendar()
 			return
 		self.msg = ''
 		self.pino_alvo = None
-		self._preencher_pinos(nome)
+		self._preencher_pinos(nome, self.achados[0][0])
 		self.indice = 0
 		self.ir_para(0)
 		if foco:
 			self.busca.select_range(0, 'end')
 
 	# ------------------------------------------------------------ pinos
-	def _preencher_pinos(self, ref):
+	def _preencher_pinos(self, ref, lado=None):
 		"""Lista os pinos do componente com a net de cada um."""
 		self.pinos = self.prj.pinos(ref)
+		self.pads_vista, self.pads_erro = {}, None
+		if lado is not None and lado.tipo == 'montagem':
+			pads, erro = self.prj.pads_na_montagem(ref, lado)
+			self.pads_vista = {pino: ponto for pino, _net, ponto in pads}
+			self.pads_erro = erro
 		self.lista_pinos.delete(0, 'end')
 		gnd = 0
 		for i, (pino, net, rect) in enumerate(self.pinos):
@@ -586,12 +767,14 @@ class App:
 		texto = 'Pinos de %s' % ref if self.pinos else 'Pinos'
 		if gnd:
 			texto += '  -  %d em GND (tecla G)' % gnd
+		if self.pads_erro is not None and self.pads_erro > 1.0:
+			texto += '  [projecao a %.1f pt dos pads]' % self.pads_erro
 		if self.prj.pads and self.prj.pads.incerto(ref):
 			texto += '  [pads incertos]'
 		self.rotulo_pinos.configure(text=texto)
 
 	def ir_para_pino(self, indice=None):
-		"""Centraliza o pad do pino selecionado, na pagina do PCB Print."""
+		"""Destaca o pad do pino escolhido, na propria vista de montagem."""
 		if indice is None:
 			sel = self.lista_pinos.curselection()
 			if not sel:
@@ -600,8 +783,10 @@ class App:
 		if indice >= len(self.pinos):
 			return
 		pino, net, rect = self.pinos[indice]
-		if rect is None:
-			self.msg = 'pino %s: sem pad no PCB Print' % pino
+		ponto = self.pads_vista.get(pino)
+		if ponto is None:
+			self.msg = ('pino %s: sem pad no PCB Print' % pino if rect is None else
+						'pino %s: pad nao projetado nesta vista' % pino)
 			self.agendar()
 			return
 		self.msg = ''
@@ -609,25 +794,23 @@ class App:
 		self.lista_pinos.selection_clear(0, 'end')
 		self.lista_pinos.selection_set(indice)
 		self.lista_pinos.see(indice)
-		self.lado = self.prj.print_lado
-		self.var_lado.set(self.lado.nome)
-		self.alvo = (self.lado, rect)
-		self.achados = [(self.lado, rect)]
-		self.indice = 0
 		cw = max(self.canvas.winfo_width(), 200)
 		ch = max(self.canvas.winfo_height(), 200)
-		w = max(rect.width, 1.0) * PAD_FACTOR + PAD_PT
-		h = max(rect.height, 1.0) * PAD_FACTOR + PAD_PT
+		# enquadra o componente inteiro, para o pino aparecer no contexto dele
+		xs = [p.x for p in self.pads_vista.values()]
+		ys = [p.y for p in self.pads_vista.values()]
+		w = max(max(xs) - min(xs), 1.0) + PAD_PT
+		h = max(max(ys) - min(ys), 1.0) + PAD_PT
 		self.zoom = max(ZOOM_MIN, min(ZOOM_MAX, min(cw / w, ch / h)))
-		self.centro = ((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+		self.centro = (ponto.x, ponto.y)
 		self.agendar()
 
 	def ir_para_gnd(self):
 		"""Pula para o primeiro pino de terra do componente localizado."""
 		for i, (pino, net, rect) in enumerate(self.pinos):
-			if _eh_gnd(net) and rect is not None:
+			if _eh_gnd(net) and pino in self.pads_vista:
 				return self.ir_para_pino(i)
-		self.msg = 'sem pino de GND com pad conhecido'
+		self.msg = 'sem pino de GND com pad localizado'
 		self.agendar()
 
 	def proxima(self, passo):
@@ -745,6 +928,7 @@ class App:
 
 		info = 'lado %s | zoom %.0f%% | %d componente(s) na lista' % (
 			self.lado.nome, self.zoom * 100, self.n_lista)
+		self._desenhar_pads()
 		if self.alvo and self.alvo[0] is self.lado:
 			lado, r = self.alvo
 			x0, y0 = self._pdf_para_tela(r.x0, r.y0)
@@ -761,12 +945,11 @@ class App:
 					(y0 + y1) / 2 + dy * (m + 34 + (y1 - y0) / 2),
 					fill='#ff2d2d', width=2)
 			nome = _norm(self.var_busca.get())
-			if self.pino_alvo and lado.tipo == 'print':
+			if self.pino_alvo:
 				pino, net = self.pino_alvo
-				nome = '%s pino %s' % (nome, pino)
-				info = '%s | net %s%s | %s | zoom %.0f%%' % (
-					nome, net or '(sem net)', '  <<< GND' if _eh_gnd(net) else '',
-					lado.nome, self.zoom * 100)
+				info = '%s pino %s | net %s%s | lado %s | zoom %.0f%%' % (
+					nome, pino, net or '(sem net)',
+					'  <<< GND' if _eh_gnd(net) else '', lado.nome, self.zoom * 100)
 			else:
 				ocorr = ' (%d/%d)' % (self.indice + 1, len(self.achados)) if len(self.achados) > 1 else ''
 				info = '%s%s | lado %s | zona %s | zoom %.0f%%' % (
@@ -776,6 +959,30 @@ class App:
 		if self.msg:
 			info = '%s   <<< %s' % (info, self.msg)
 		self.status.configure(text=info)
+
+	def _desenhar_pads(self):
+		"""Marca os pads do componente sobre o desenho: GND em verde."""
+		if not self.pads_vista or self.alvo is None or self.alvo[0] is not self.lado:
+			return
+		nets = {pino: net for pino, net, _r in self.pinos}
+		raio = max(3.0, min(16.0, 0.55 * self.zoom))
+		for pino, ponto in self.pads_vista.items():
+			x, y = self._pdf_para_tela(ponto.x, ponto.y)
+			if not (-20 <= x <= self.canvas.winfo_width() + 20
+					and -20 <= y <= self.canvas.winfo_height() + 20):
+				continue
+			escolhido = self.pino_alvo and self.pino_alvo[0] == pino
+			gnd = _eh_gnd(nets.get(pino, ''))
+			cor = '#0a7d24' if gnd else '#1467d6'
+			r = raio * (1.6 if escolhido else 1.0)
+			self.canvas.create_oval(x - r, y - r, x + r, y + r,
+									outline='#ff2d2d' if escolhido else cor,
+									width=3 if escolhido else 2)
+			if escolhido or (gnd and raio >= 6):
+				self.canvas.create_text(x + r + 3, y - r - 2,
+										text=pino if not gnd else '%s GND' % pino,
+										anchor='sw', fill='#ff2d2d' if escolhido else cor,
+										font=('Consolas', 10, 'bold'))
 
 	# ------------------------------------------------------------ saida
 	def salvar(self):

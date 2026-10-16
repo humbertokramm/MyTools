@@ -138,8 +138,9 @@ A barra de status mostra o lado (Top/Bottom) e a zona da moldura (ex.: `E2`).
 
 **Pinos e GND.** Inclua no OutJob, além do Draftsman, um *PCB Print* e gere uma netlist
 Protel (`.NET`) na mesma pasta. O `pcbzoom` lê os marcadores invisíveis de pad do printout,
-cruza com a netlist e mostra a net de cada pino; `G` pula direto no primeiro pad de terra e
-o duplo clique no painel de pinos pula no pad escolhido.
+cruza com a netlist e projeta os pads de volta na vista de montagem — os pinos aparecem
+marcados em cima do desenho do Draftsman, os de terra em verde. `G` destaca o primeiro pad
+de terra e o duplo clique no painel de pinos destaca o pino escolhido.
 
 ### Instalar o hook commit-msg do Gerrit (Change-Id automático)
 
