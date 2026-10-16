@@ -1466,7 +1466,13 @@ class CsvScope:
 		Note:
 			- Remove o componente DC (frequência zero).
 			- Calcula apenas frequências positivas.
+			- id='all' processa todas as séries carregadas, que é o que o
+			  plot_fft(merge=True) espera encontrar.
 		"""
+		if id == 'all':
+			for i in range(len(self.reads)):
+				self.format_fft(i, f=f)
+			return
 		if name != '':
 			_,id = self._find_key(self.reads,name)
 		d = self.reads[id]
@@ -1518,10 +1524,10 @@ class CsvScope:
 				fft_filtered[i] = 0
 		self.ifft_data(fft_filtered,id,'ac_ripple_filter',f=f)
 
-	def plot_fft(self, t='Minhas Leituras',grid = True,size=(12, 6),axe='linear',out='png',mark=1,path='',transparent=False):
+	def plot_fft(self, t='Minhas Leituras',grid = True,size=(12, 6),axe='linear',out='png',mark=1,path='',transparent=False,merge=False):
 		"""
 		Plota o espectro de frequência (FFT) das séries que possuem dados FFT calculados.
-		
+
 		Args:
 			t (str, optional): Título do gráfico. Se 'Minhas Leituras', usa self.title.
 				Padrão é 'Minhas Leituras'.
@@ -1531,169 +1537,198 @@ class CsvScope:
 			axe (str, optional): Tipo de escala do eixo X: 'linear' ou 'log'. Padrão é 'linear'.
 			out (str, optional): Formato de saída: 'png', 'pdf', etc. Padrão é 'png'.
 			mark (int, optional): Número de picos de frequência a marcar automaticamente.
-				Padrão é 1.
+				0 desliga a marcação. Padrão é 1.
 			path (str, optional): Caminho para salvar. Se '', usa self.path. Padrão é ''.
 			transparent (bool, optional): Se True, fundo transparente. Padrão é False.
-		
+			merge (bool, optional): Se True, sobrepõe todas as séries num único
+				gráfico, como o plot() faz no domínio do tempo. Se False (padrão),
+				gera um gráfico por série, que é o comportamento de sempre.
+
 		Returns:
-			None: Plota e salva o gráfico FFT para cada série com dados FFT.
-		
+			None: Plota e salva o gráfico FFT.
+
 		Note:
 			- Apenas séries com chave 'fft' são plotadas.
 			- Os picos são marcados automaticamente como p1, p2, etc.
+			- Com merge=True vale a ÚLTIMA máscara do grupo: agrupar séries que
+			  compartilham a mesma máscara é responsabilidade de quem monta as
+			  séries. O AC Ripple e o veredito de cada série vão para a legenda,
+			  que é o único lugar onde cabem quando são muitas.
 		"""
-		for serie in self.reads:
-			if t=='Minhas Leituras':
-				t = self.title
-			if path=='':
-				path = self.path
-				
-			if 'fft-tittle' in serie:
-				t = serie['fft-tittle']
-			
-			if 'fft' in serie:
-				plt.subplots(figsize=size)
-				plt.title(t)
-
-				num_points = len(serie['fft']['A'])  # número total de pontos na série FFT
-				yInterval = [min(serie['fft']['A'])/num_points,max(serie['fft']['A'])/num_points]
-				yMeta = auto_scale(yInterval)
-				
-				if self.fftylabel == "auto":
-					self.fftylabel = f"Amplitude [{yMeta['unit']}V]"
-					yfator = yMeta['factor']
-				else: 
-					yfator = 1e-6
-					self.fftylabel = "Amplitude [µV]"
-
-				plt.xlabel("Domínio da Frequência [Hz]")
-				plt.ylabel(self.fftylabel)
-
-				a=serie['fft']['f']
-				factor = 1
-				if axe =='log': plt.semilogx()
-				else:
-					symbol = format_eng_str(max(a))[-1]
-					factor = EngNotation[symbol]
-					a = [float(i) / factor for i in serie['fft']['f']]
-					plt.xlabel("Domínio da Frequência ["+symbol+"Hz]")
-				
-				# Normalizando a amplitude
-				x = np.array(a)
-				y = np.array([(amp/yfator) / num_points for amp in serie['fft']['A']])
-
-				largestValuesIndex = np.argsort(y)[-mark:][::-1]
-				j=0
-				serie['draw']=[]
-				for i in largestValuesIndex:
-					j+=1
-
-					x_ = x[i]
-					y_ = y[i]
-					
-					cord=[[x_,y_],[None,None]]
-					text='p'+str(j)+': '+format_eng_str(x_*factor,0)+'Hz'
-					style = '-'
-					dir = 'N'
-					serie['draw'].append([cord,text,style,dir])
-				
-				plt.plot(x,y)
-
-				# A mascara entra antes de medir a area porque ela costuma ser uma
-				# ordem de grandeza maior que o espectro -- e quem manda no topo do
-				# eixo. Desenhando depois, as anotacoes ficariam posicionadas pelo
-				# yMax dos dados e se amontoariam todas rente ao eixo X.
-				mask = serie.get('fft-mask')
-				if mask:
-					fm = np.asarray(mask['f'], dtype=float)
-					# Pontos densos em log: num eixo X linear os trechos da mascara
-					# nao sao retas, e ligar so os vertices deixaria a curva errada
-					# entre eles.
-					fd = np.logspace(np.log10(fm[0]), np.log10(fm[-1]), 400)
-					ld = mask_limit(mask, fd) / yfator
-					maskNome = mask.get('nome') or 'limite'
-					plt.plot(fd / factor, ld, color=mask.get('cor', 'r'),
-						linestyle='--', linewidth=1.5, label=f"Mascara {maskNome}")
-					plt.legend(loc='upper right', fontsize=8)
-
-				plt.grid(grid,which="both")
-				
-				temp={'x':x,'y':y}
-				area = self._plot_area(temp,axe)
-				# Referencia vertical das anotacoes. Sem mascara e o yMax dos dados,
-				# como sempre foi; com mascara passa a ser o topo real do eixo, que
-				# ja inclui a curva de limite.
-				yTop = area['yMax']
-				if mask:
-					yTop = plt.gca().get_ylim()[1]
-				if serie['data'] != 'None':
-					textY = -yTop / 40
-					plt.text(area['xCenter'],textY, serie['data'], ha='center', fontsize=8)
-				
-				if 'ac_ripple' in serie:
-					vpp = format_eng_str(serie['ac_ripple'][0]['vpp'],2)
-					text = f"AC Ripple: {vpp}Vpp"
-					plt.text(area['xTxt'], yTop*0.9, text,ha=area['ha'], fontsize=10, color='black')
-
-				if self.fftZone != None:
-					line = 0.9
-					for iZone, vZone in enumerate(serie['ac_ripple_filter']):
-						ZoneColor = list(mcolors.BASE_COLORS.keys())[iZone]
-						line -= 0.05
-						vpp = format_eng_str(vZone['vpp'],2)
-						strZonef1 = format_eng_str(vZone['f_min'],0)+"Hz"
-						strZonef2 = format_eng_str(vZone['f_max'],0)+"Hz"
-						text = f"AC Ripple: {vpp}Vpp in {strZonef1} to {strZonef2}"
-						plt.text(area['xTxt'], yTop*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
-						f_min_plot = vZone['f_min'] / factor
-						f_max_plot = vZone['f_max'] / factor
-						plt.axvspan(f_min_plot, f_max_plot, alpha=0.15, color=ZoneColor)
-						plt.axvline(f_min_plot, color=ZoneColor, linestyle='--', linewidth=1)
-						plt.axvline(f_max_plot, color=ZoneColor, linestyle='--', linewidth=1)
-
-				# Veredito da mascara. Diferente da fftZone, que soma o ripple de
-				# uma faixa inteira: aqui cada raia do espectro e comparada com o
-				# seu proprio limite, que varia com a frequencia.
-				if mask:
-					nome = maskNome
-					lim = mask_limit(mask, x * factor) / yfator
-					coberto = ~np.isnan(lim)
-					if coberto.any():
-						# Os valores saem em notacao de engenharia a partir dos volts,
-						# nao da unidade do eixo: 3 mV le melhor que 3e+03 uV.
-						eng = lambda v: format_eng_str(v * yfator, 2) + 'V'
-						# Onde escrever: abaixo do AC Ripple e das linhas das zonas
-						line = 0.9
-						if self.fftZone is not None and 'ac_ripple_filter' in serie:
-							line -= 0.05 * len(serie['ac_ripple_filter'])
-						line -= 0.05
-						viola = coberto & (y > lim)
-						if viola.any():
-							# pior = maior excesso relativo, nao maior amplitude: uma
-							# raia pequena numa regiao de limite apertado e pior
-							# violacao do que uma raia grande onde a mascara abre.
-							pior = int(np.nanargmax(np.where(viola, y / lim, np.nan)))
-							txt = (f"Mascara {nome}: FAIL - {int(viola.sum())} raia(s) acima, "
-								f"pior em {format_eng_str(x[pior] * factor, 0)}Hz "
-								f"({eng(y[pior])} vs {eng(lim[pior])})")
-							cor = 'red'
-							plt.plot(x[pior], y[pior], 'x', color='red', markersize=9)
-						else:
-							folga = float(np.nanmin(np.where(coberto, lim - y, np.nan)))
-							txt = f"Mascara {nome}: PASS - folga minima {eng(folga)}"
-							cor = 'green'
-						plt.text(area['xTxt'], yTop * line, txt,
-							ha=area['ha'], fontsize=10, color=cor)
-
-				for note in serie['draw']:
-					a=self._draw_arrow(note,[0,0])
-					#plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],arrowprops=dict(arrowstyle=a['arrowstyle'], linestyle=a['linestyle']))
-					plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],ha=a['ha'],va=a['va'],arrowprops=a['props'])
-				# Salva a figura
-				self.save_figure(plt,out,path,t,transparent)
-				# Exibindo a figura
-				plt.show(block=False)
+		series = [s for s in self.reads if 'fft' in s]
+		if not series: return
+		if t == 'Minhas Leituras': t = self.title
+		if path == '': path = self.path
+		# Um grupo por figura: tudo junto no merge, uma a uma fora dele.
+		for grupo in ([series] if merge else [[s] for s in series]):
+			self._plot_fft_group(grupo,t,grid,size,axe,out,mark,path,transparent)
 		return
+
+	def _plot_fft_group(self,grupo,t,grid,size,axe,out,mark,path,transparent):
+		"""Desenha uma figura de FFT com uma ou várias séries sobrepostas.
+
+		Recebe sempre uma lista. Fora do merge ela tem uma série só, e o
+		resultado é o mesmo que o plot_fft sempre produziu.
+		"""
+		varias = len(grupo) > 1
+		if not varias and 'fft-tittle' in grupo[0]:
+			t = grupo[0]['fft-tittle']
+
+		plt.subplots(figsize=size)
+		plt.title(t)
+
+		# Amplitude normalizada. Cada série tem o seu número de pontos, então
+		# a divisão é por série e não pelo total do grupo.
+		amps = [np.asarray(s['fft']['A']) / len(s['fft']['A']) for s in grupo]
+		todas = np.concatenate(amps)
+		yMeta = auto_scale([todas.min(), todas.max()])
+		# Nao mexe em self.fftylabel: ele e do objeto e vale para todas as
+		# figuras. Sobrescreve-lo fazia a segunda serie cair sempre no ramo de
+		# uV, com o fator de escala errado -- so nao aparecia porque ate agora
+		# cada CsvScope tinha uma serie so.
+		if self.fftylabel == "auto":
+			ylabel = f"Amplitude [{yMeta['unit']}V]"
+			yfator = yMeta['factor']
+		else:
+			ylabel = self.fftylabel
+			yfator = 1e-6
+
+		# Eixo X: o fator sai da maior frequencia do grupo, para todas as
+		# series ficarem na mesma unidade.
+		factor = 1
+		plt.xlabel("Domínio da Frequência [Hz]")
+		if axe == 'log':
+			plt.semilogx()
+		else:
+			symbol = format_eng_str(max(max(s['fft']['f']) for s in grupo))[-1]
+			factor = EngNotation[symbol]
+			plt.xlabel("Domínio da Frequência ["+symbol+"Hz]")
+		plt.ylabel(ylabel)
+
+		# Vale a ULTIMA mascara do grupo.
+		mask = None
+		for s in grupo:
+			if s.get('fft-mask'): mask = s['fft-mask']
+		maskNome = (mask.get('nome') or 'limite') if mask else ''
+		eng = lambda v: format_eng_str(v * yfator, 2) + 'V'
+
+		xs = [np.asarray(s['fft']['f'], dtype=float) / factor for s in grupo]
+		ys = [A / yfator for A in amps]
+
+		# Series, com o veredito da mascara de cada uma
+		area = None
+		falhas = []
+		for s, x, y in zip(grupo, xs, ys):
+			rotulo = s.get('name') or ''
+			falhou = False
+			if mask:
+				lim = mask_limit(mask, x * factor) / yfator
+				viola = (~np.isnan(lim)) & (y > lim)
+				if viola.any():
+					# pior = maior excesso relativo, nao maior amplitude: uma
+					# raia pequena numa regiao de limite apertado e pior
+					# violacao do que uma raia grande onde a mascara abre.
+					falhou = True
+					pior = int(np.nanargmax(np.where(viola, y / lim, np.nan)))
+					falhas.append((rotulo, int(viola.sum()), x[pior], y[pior], lim[pior]))
+					plt.plot(x[pior], y[pior], 'x', color='red', markersize=9, zorder=6)
+			if varias:
+				extras = []
+				if 'ac_ripple' in s:
+					extras.append(format_eng_str(s['ac_ripple'][0]['vpp'],2)+'Vpp')
+				if mask:
+					extras.append('FAIL' if falhou else 'PASS')
+				if extras: rotulo = f"{rotulo}  ({', '.join(extras)})"
+			plt.plot(x, y, label=rotulo if varias else None)
+			area = self._plot_area({'x':x,'y':y}, axe, area)
+
+		# A mascara entra antes de medir o topo do eixo porque costuma ser uma
+		# ordem de grandeza maior que o espectro -- e quem manda no ylim.
+		if mask:
+			fm = np.asarray(mask['f'], dtype=float)
+			# Pontos densos em log: num eixo X linear os trechos da mascara nao
+			# sao retas, e ligar so os vertices deixaria a curva errada entre eles.
+			fd = np.logspace(np.log10(fm[0]), np.log10(fm[-1]), 400)
+			plt.plot(fd / factor, mask_limit(mask, fd) / yfator,
+				color=mask.get('cor', 'r'), linestyle='--', linewidth=1.5,
+				zorder=5, label=f"Mascara {maskNome}")
+		if mask or varias:
+			# Com muitas series os rotulos sao longos (o nome da net inteira);
+			# encolhe a fonte para a legenda nao tomar meio grafico.
+			plt.legend(loc='upper right', fontsize=7 if len(grupo) > 4 else 8)
+
+		plt.grid(grid,which="both")
+
+		# Referencia vertical das anotacoes: o topo real do eixo, que ja inclui
+		# a mascara. Pelo yMax dos dados elas se amontoariam rente ao eixo X.
+		yTop = plt.gca().get_ylim()[1]
+
+		dados = grupo[0]['data'] if not varias else 'None'
+		if dados != 'None':
+			plt.text(area['xCenter'], -yTop / 40, dados, ha='center', fontsize=8)
+
+		line = 0.9
+		if not varias and 'ac_ripple' in grupo[0]:
+			vpp = format_eng_str(grupo[0]['ac_ripple'][0]['vpp'],2)
+			plt.text(area['xTxt'], yTop*line, f"AC Ripple: {vpp}Vpp",
+				ha=area['ha'], fontsize=10, color='black')
+
+		# Zonas: o sombreado e geometrico e sai uma vez so. Os numeros de cada
+		# zona so cabem quando ha uma serie; no merge eles ficam de fora.
+		if self.fftZone != None and 'ac_ripple_filter' in grupo[0]:
+			for iZone, vZone in enumerate(grupo[0]['ac_ripple_filter']):
+				ZoneColor = list(mcolors.BASE_COLORS.keys())[iZone]
+				line -= 0.05
+				if not varias:
+					vpp = format_eng_str(vZone['vpp'],2)
+					strZonef1 = format_eng_str(vZone['f_min'],0)+"Hz"
+					strZonef2 = format_eng_str(vZone['f_max'],0)+"Hz"
+					text = f"AC Ripple: {vpp}Vpp in {strZonef1} to {strZonef2}"
+					plt.text(area['xTxt'], yTop*line, text,ha=area['ha'], fontsize=10, color=ZoneColor)
+				f_min_plot = vZone['f_min'] / factor
+				f_max_plot = vZone['f_max'] / factor
+				plt.axvspan(f_min_plot, f_max_plot, alpha=0.15, color=ZoneColor)
+				plt.axvline(f_min_plot, color=ZoneColor, linestyle='--', linewidth=1)
+				plt.axvline(f_max_plot, color=ZoneColor, linestyle='--', linewidth=1)
+
+		# Veredito da mascara. Diferente da fftZone, que soma o ripple de uma
+		# faixa inteira: aqui cada raia do espectro e comparada com o seu
+		# proprio limite, que varia com a frequencia.
+		if mask:
+			line -= 0.05
+			if not falhas:
+				txt = f"Mascara {maskNome}: PASS"
+				if not varias:
+					lim = mask_limit(mask, xs[0] * factor) / yfator
+					coberto = ~np.isnan(lim)
+					folga = float(np.nanmin(np.where(coberto, lim - ys[0], np.nan)))
+					txt += f" - folga minima {eng(folga)}"
+				cor = 'green'
+			elif varias:
+				txt = (f"Mascara {maskNome}: FAIL - {len(falhas)} de {len(grupo)} "
+					f"series acima (marcadas com x)")
+				cor = 'red'
+			else:
+				rotulo, n, xf, yv, lv = falhas[0]
+				txt = (f"Mascara {maskNome}: FAIL - {n} raia(s) acima, "
+					f"pior em {format_eng_str(xf * factor, 0)}Hz "
+					f"({eng(yv)} vs {eng(lv)})")
+				cor = 'red'
+			plt.text(area['xTxt'], yTop * line, txt, ha=area['ha'], fontsize=10, color=cor)
+
+		# Picos
+		if mark and mark > 0:
+			for s, x, y in zip(grupo, xs, ys):
+				s['draw'] = []
+				for j, i in enumerate(np.argsort(y)[-mark:][::-1], start=1):
+					s['draw'].append([[[x[i],y[i]],[None,None]],
+						'p'+str(j)+': '+format_eng_str(x[i]*factor,0)+'Hz', '-', 'N'])
+				for note in s['draw']:
+					a = self._draw_arrow(note,[0,0])
+					plt.annotate(a['txt'], xy=a['xy'],xytext=a['xytext'],ha=a['ha'],va=a['va'],arrowprops=a['props'])
+
+		self.save_figure(plt,out,path,t,transparent)
+		plt.show(block=False)
 
 	def get_eth_config(self, mode: str):
 		"""
