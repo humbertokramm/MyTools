@@ -42,4 +42,4 @@ if project == "pd4302" then
 	notstart = false
 end
 
-if notstart then print("chame: jtag pdxxxx COMx") end
+if notstart then print("Nao alimentou nada, chame: \njtag pdxxxx COMx") end
