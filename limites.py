@@ -321,6 +321,34 @@ mascaras = {
             (1000e6, 15e-3),
         ],
     },
+    "CORE_VDD": {
+        "cor": "tab:blue",
+        "pontos": [
+            (0.1e6,  5e-3),    # sob a tabela 32
+            (50e6,   5e-3),    # sob a tabela 32
+        ],
+    },
+    "GOP_VDD": {
+        "cor": "tab:blue",
+        "pontos": [
+            (0.1e6,  5e-3),    # sob a tabela 32
+            (50e6,   5e-3),    # sob a tabela 32
+        ],
+    },
+    "AVDD18": {
+        "cor": "tab:blue",
+        "pontos": [
+            (0.1e6,  5e-3),    # sob a tabela 32
+            (50e6,   5e-3),    # sob a tabela 32
+        ],
+    },
+    "VDDO": {
+        "cor": "tab:blue",
+        "pontos": [
+            (0.1e6,  5e-3),    # sob a tabela 32
+            (50e6,   5e-3),    # sob a tabela 32
+        ],
+    },
     "VDDH": {
         "cor": "tab:red",
         "pontos": [
