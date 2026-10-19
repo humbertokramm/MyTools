@@ -145,7 +145,7 @@ def channel_tags(bw=None, escala=None):
 	return tags
 
 
-def fft_mask(pontos, nome='', cor='r'):
+def fft_mask(pontos, nome='', cor='r', zona=None):
 	"""Monta uma mascara de espectro a partir dos vertices do grafico.
 
 	Args:
@@ -153,6 +153,9 @@ def fft_mask(pontos, nome='', cor='r'):
 			crescente de frequencia. Sao os cantos da curva do datasheet.
 		nome (str): rotulo que aparece na legenda e no veredito.
 		cor (str): cor da curva no grafico.
+		zona (seq): faixa ``[f_min, f_max]`` onde o datasheet manda medir o
+			ripple, aceitando 'start' e 'end'. Vira zona de analise sozinha
+			quando o CsvScope.fftZone estiver vazio.
 
 	Returns:
 		dict: pronto para ``CsvScope.fftMask``.
@@ -167,7 +170,9 @@ def fft_mask(pontos, nome='', cor='r'):
 	a = [float(p[1]) for p in pontos]
 	if any(f[i] >= f[i+1] for i in range(len(f)-1)):
 		raise ValueError("fft_mask: as frequencias precisam ser crescentes")
-	return {'f': f, 'a': a, 'nome': nome, 'cor': cor}
+	m = {'f': f, 'a': a, 'nome': nome, 'cor': cor}
+	if zona: m['zona'] = list(zona)
+	return m
 
 
 def mask_limit(mask, f):
@@ -1617,12 +1622,17 @@ class CsvScope:
 		self.ifft_data(fft,id,'ac_ripple',f=[fftfreq[1],fftfreq[-1]])
 
 		# ---- Zona de interesse ----
-		if self.fftZone is not None and len(self.fftZone) > 0:
-			self.fftZone = self.fftZone if isinstance(self.fftZone[0], list) else [self.fftZone]
-			for zone in self.fftZone:
-				if zone[0] == 'start': zone[0] = fftfreq[1]
-				if zone[1] == 'end': zone[1] = np.max(fftfreq)
-				self.fft_filter(fft,fftfreq,id,f=zone)
+		# Zona declarada na mao ganha; sem ela vale a que veio junto da
+		# mascara, que sai da mesma linha do datasheet que a curva de limite.
+		zonas = self.fftZone if self.fftZone else (self.fftMask or {}).get('zona')
+		if zonas:
+			zonas = zonas if isinstance(zonas[0], (list, tuple)) else [zonas]
+			for zone in zonas:
+				# 'start' e 'end' sao resolvidos em cada serie: a menor frequencia
+				# amostrada depende do record length daquela captura.
+				f0 = fftfreq[1]       if zone[0] == 'start' else zone[0]
+				f1 = np.max(fftfreq)  if zone[1] == 'end'   else zone[1]
+				self.fft_filter(fft,fftfreq,id,f=[f0,f1])
 
 		a = []
 		b = []
@@ -1815,7 +1825,9 @@ class CsvScope:
 
 		# Zonas: o sombreado e geometrico e sai uma vez so. Os numeros de cada
 		# zona so cabem quando ha uma serie; no merge eles ficam de fora.
-		if self.fftZone != None and 'ac_ripple_filter' in grupo[0]:
+		# Pergunta a serie, nao o self.fftZone: a zona pode ter vindo da
+		# mascara em vez de ter sido declarada.
+		if 'ac_ripple_filter' in grupo[0]:
 			for iZone, vZone in enumerate(grupo[0]['ac_ripple_filter']):
 				ZoneColor = list(mcolors.BASE_COLORS.keys())[iZone]
 				line -= 0.05

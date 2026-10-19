@@ -321,34 +321,21 @@ mascaras = {
             (1000e6, 15e-3),
         ],
     },
+    # Tabela 32: teto plano, sem a curva de filtro dos SERDES. A zona vai da
+    # menor frequencia amostrada ate 20 MHz -- e onde a especificacao manda
+    # medir o ripple.
     "CORE_VDD": {
         "cor": "tab:blue",
         "pontos": [
-            (0.1e6,  5e-3),    # sob a tabela 32
-            (50e6,   5e-3),    # sob a tabela 32
+            (0.1e6,  5e-3),
+            (50e6,   5e-3),
         ],
+        "zona": ["start", 20e6],
     },
-    "GOP_VDD": {
-        "cor": "tab:blue",
-        "pontos": [
-            (0.1e6,  5e-3),    # sob a tabela 32
-            (50e6,   5e-3),    # sob a tabela 32
-        ],
-    },
-    "AVDD18": {
-        "cor": "tab:blue",
-        "pontos": [
-            (0.1e6,  5e-3),    # sob a tabela 32
-            (50e6,   5e-3),    # sob a tabela 32
-        ],
-    },
-    "VDDO": {
-        "cor": "tab:blue",
-        "pontos": [
-            (0.1e6,  5e-3),    # sob a tabela 32
-            (50e6,   5e-3),    # sob a tabela 32
-        ],
-    },
+    # Mesma linha da tabela 32 que a CORE_VDD
+    "GOP_VDD": "CORE_VDD",
+    "AVDD18":  "CORE_VDD",
+    "VDDO":    "CORE_VDD",
     "VDDH": {
         "cor": "tab:red",
         "pontos": [
@@ -377,10 +364,16 @@ def getMask(nome):
     """Mascara de ruido de um trilho, pronta para ``CsvScope.fftMask``.
 
     Args:
-        nome (str): chave em ``mascaras``, ex ``"VDDA"``.
+        nome (str): chave em ``mascaras``, ex ``"VDDA"``. Uma entrada pode
+            ser apenas o nome de outra, e ai e um apelido: os trilhos que
+            caem na mesma linha do datasheet compartilham a definicao em vez
+            de copia-la.
 
     Returns:
-        dict: curva de limite com nome e cor.
+        dict: curva de limite com nome, cor e, quando o datasheet manda medir
+            o ripple numa faixa, a ``zona`` correspondente. O nome que volta
+            e o pedido, nao o do apelidado -- o grafico deve dizer qual
+            trilho foi medido.
 
     Exemplo:
         CS.fftMask = getMask("VDDA")
@@ -389,11 +382,19 @@ def getMask(nome):
     Note:
         A mascara e gravada na serie no ``format_fft``, entao para usar uma
         mascara diferente em cada grafico basta trocar ``CS.fftMask`` antes
-        de cada chamada.
+        de cada chamada. A zona que vem junto so vale se o ``CS.fftZone``
+        estiver vazio: zona declarada na mao sempre ganha.
     """
     from csvscope import fft_mask
-    if nome not in mascaras:
+    visitados = set()
+    chave = nome
+    while isinstance(mascaras.get(chave), str):
+        if chave in visitados:
+            raise ValueError(f"apelido circular de mascara em '{chave}'")
+        visitados.add(chave)
+        chave = mascaras[chave]
+    if chave not in mascaras:
         raise KeyError(f"mascara '{nome}' nao cadastrada. Disponiveis: "
                        + ", ".join(sorted(mascaras)))
-    m = mascaras[nome]
-    return fft_mask(m["pontos"], nome=nome, cor=m["cor"])
+    m = mascaras[chave]
+    return fft_mask(m["pontos"], nome=nome, cor=m["cor"], zona=m.get("zona"))
