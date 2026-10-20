@@ -9,7 +9,10 @@
 	caminho, então o projeto tem que ser escolhido na mão. Aqui o Python
 	serve o viewer e os arquivos do projeto em ``http://127.0.0.1``; um
 	gancho injetado na página busca o ``.PcbDoc`` por ``fetch``, acha o
-	componente, isola a camada e vira a placa se ele estiver embaixo.
+	componente, isola a camada e vira a placa se ele estiver embaixo. Tambem
+	aceita o nome de uma net no lugar do componente: nesse caso seleciona a
+	net inteira e deixa ligadas so a Top e a Bottom, porque por quais camadas
+	interessa olhar varia demais - as internas ficam a um clique no painel.
 
 	A mesma aba acompanha as chamadas seguintes (ela consulta o alvo no
 	servidor), então dá para seguir uma varredura de pontos de medição sem
@@ -157,20 +160,23 @@ class Servidor:
 		self.viewer = achar_viewer(caminho_viewer)
 		self.pagina = pagina_com_gancho(self.viewer)
 		self.arquivos = arquivos_do_projeto(self.projeto, extensoes)
-		self.alvo = {'comp': '', 'pino': '', 'iso': True, 'seq': 0}
+		self.alvo = {'comp': '', 'pino': '', 'net': '', 'iso': True, 'seq': 0}
 		classe = type('Handler', (_Handler,), {'servidor': self})
 		self.http = http.server.ThreadingHTTPServer(('127.0.0.1', porta), classe)
 		self.porta = self.http.server_address[1]
 		threading.Thread(target=self.http.serve_forever, daemon=True).start()
 
-	def define_alvo(self, componente, pino='', isolar=True):
+	def define_alvo(self, componente, pino='', isolar=True, net=''):
 		self.alvo = {'comp': str(componente or '').strip(), 'pino': str(pino or '').strip(),
-					 'iso': bool(isolar), 'seq': self.alvo['seq'] + 1}
+					 'net': str(net or '').strip(), 'iso': bool(isolar),
+					 'seq': self.alvo['seq'] + 1}
 
 	def url(self):
+		from urllib.parse import quote
 		a = self.alvo
-		return 'http://127.0.0.1:%d/?comp=%s&pino=%s&iso=%d#projeto' % (
-			self.porta, a['comp'], a['pino'], 1 if a['iso'] else 0)
+		return 'http://127.0.0.1:%d/?comp=%s&pino=%s&net=%s&iso=%d#projeto' % (
+			self.porta, quote(a['comp']), quote(a['pino']), quote(a['net']),
+			1 if a['iso'] else 0)
 
 	def fechar(self):
 		self.http.shutdown()
@@ -179,14 +185,16 @@ class Servidor:
 _SERVIDOR = None
 
 
-def abrir(projeto, componente, pino='', isolar=True, viewer=None, porta=PORTA_PADRAO,
-		  extensoes=EXT_PROJETO, abrir_navegador=True):
-	"""Mostra um componente no viewer, subindo o servidor na primeira chamada.
+def abrir(projeto, componente='', pino='', isolar=True, viewer=None, porta=PORTA_PADRAO,
+		  extensoes=EXT_PROJETO, abrir_navegador=True, net=''):
+	"""Mostra um componente (ou uma net) no viewer, subindo o servidor na 1a chamada.
 
 	:param projeto: pasta do projeto Altium (onde esta o ``.PcbDoc``)
 	:param componente: designador, ex. ``'C1052'``
 	:param pino: pino a destacar, ex. ``'2'`` (opcional)
-	:param isolar: deixa visivel so a camada do lado do componente
+	:param net: nome da net, ex. ``'DGND'``; tem prioridade sobre o componente
+	:param isolar: para um componente, deixa visivel so a camada do lado dele;
+		para uma net, so as camadas em que ela tem cobre
 	:return: URL servida
 	"""
 	global _SERVIDOR
@@ -201,7 +209,7 @@ def abrir(projeto, componente, pino='', isolar=True, viewer=None, porta=PORTA_PA
 				raise
 			_SERVIDOR = Servidor(projeto, viewer, 0, extensoes)
 		novo = True
-	_SERVIDOR.define_alvo(componente, pino, isolar)
+	_SERVIDOR.define_alvo(componente, pino, isolar, net)
 	url = _SERVIDOR.url()
 	if novo and abrir_navegador:
 		webbrowser.open(url)
@@ -217,7 +225,8 @@ def main(argv=None):
 	ap = argparse.ArgumentParser(
 		description='Abre o Viewer PCB & 3D no componente, com a camada do lado dele.')
 	ap.add_argument('projeto', help='pasta do projeto Altium (com o .PcbDoc)')
-	ap.add_argument('-c', '--componente', required=True, help='designador, ex. C1052')
+	ap.add_argument('-c', '--componente', default='', help='designador, ex. C1052')
+	ap.add_argument('-n', '--net', default='', help='nome da net, ex. DGND')
 	ap.add_argument('-p', '--pino', default='', help='pino a destacar, ex. 2')
 	ap.add_argument('--sem-isolar', action='store_true',
 					help='mantem todas as camadas visiveis')
@@ -228,8 +237,10 @@ def main(argv=None):
 	args = ap.parse_args(argv)
 
 	exts = ('.pcbdoc', '.schdoc', '.prjpcb') if args.tudo else EXT_PROJETO
+	if not args.componente and not args.net:
+		ap.error('informe um componente (-c) ou uma net (-n)')
 	url = abrir(args.projeto, args.componente, args.pino, not args.sem_isolar,
-				args.viewer, args.porta, exts)
+				args.viewer, args.porta, exts, net=args.net)
 	s = servindo()
 	print('pcbview: %d arquivo(s) de %s' % (len(s.arquivos), s.projeto))
 	print('pcbview: servindo em %s' % url)

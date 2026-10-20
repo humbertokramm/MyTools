@@ -15,9 +15,10 @@
     let q = {};
     try {
       const u = new URLSearchParams((parent !== window ? parent.location : location).search);
-      q = { comp: u.get('comp') || '', pino: u.get('pino') || '', iso: u.get('iso') !== '0' };
-    } catch (e) { q = { comp: '', pino: '', iso: true }; }
-    if (!q.comp) {
+      q = { comp: u.get('comp') || '', pino: u.get('pino') || '',
+            net: u.get('net') || '', iso: u.get('iso') !== '0' };
+    } catch (e) { q = { comp: '', pino: '', net: '', iso: true }; }
+    if (!q.comp && !q.net) {
       let h = '';
       try { h = ((parent !== window ? parent.location : location).hash || ''); } catch (e) {}
       const p = h.replace('#', '').split('/');
@@ -37,18 +38,63 @@
     S.active = null;
   }
 
-  /* Na primeira carga o canvas ainda nao tem altura e o fitPCB sai com
-     escala zero - a tela fica em branco. Insiste ate enquadrar. */
-  function enquadrarQuandoDer(tentativas) {
-    if (!S.selComp || !S.selComp.bbox) return;
-    fitPCB(S.selComp.bbox);
+  /* Enquanto a aba esta em segundo plano o canvas pode ficar sem altura, e
+     o fitPCB sai com escala zero - a tela fica em branco. Guarda o que
+     deveria estar enquadrado e insiste, inclusive quando a janela volta. */
+  let ultimoQuadro = null;
+
+  function enquadrar(box) {
+    if (box) ultimoQuadro = box;
+    if (!ultimoQuadro) return;
+    fitPCB(ultimoQuadro);
+  }
+
+  function enquadrarQuandoDer(box, tentativas) {
+    enquadrar(box);
     if (!(S.pcbView.s > 0) && tentativas > 0) {
-      setTimeout(() => enquadrarQuandoDer(tentativas - 1), 150);
+      setTimeout(() => enquadrarQuandoDer(null, tentativas - 1), 150);
     }
   }
 
+  const retomar = () => { if (ultimoQuadro && !(S.pcbView.s > 0)) enquadrar(null); };
+  window.addEventListener('resize', retomar);
+  document.addEventListener('visibilitychange', retomar);
+
+  /* Uma net costuma andar por muitas camadas, e qual delas interessa depende
+     do que se vai medir. Entao deixa so as duas externas ligadas e o resto
+     por conta de quem esta olhando. */
+  function isolaNet() {
+    const manter = new Set([IDS.topCobre, IDS.botCobre, IDS.padsVias]
+                           .filter(id => S.pcb.layers.has(id)));
+    manter.add('holes');
+    manter.add('board');
+    S.visible = manter;
+    S.active = null;
+  }
+
+  function focarNet(q) {
+    const alvo = q.net.trim().toUpperCase();
+    const i = S.pcb.nets.findIndex(n => (n.name || '').toUpperCase() === alvo);
+    if (i < 0) { setStatus('Net ' + alvo + ' nao encontrada nesta placa'); return false; }
+    if (S.view !== 'pcb') setView('pcb');
+    S.selComp = null; S.schSel = null;
+    selectNet(i);
+    if (q.iso) isolaNet();
+    const b = new BBox();
+    (S.pcb.nets[i].pads || []).forEach(p => b.add(p.x, p.y, Math.max(p.sx, p.sy) / 2));
+    if (b.ok) enquadrarQuandoDer(b, 40);
+    renderSide();
+    redraw();
+    setStatus('Net ' + S.pcb.nets[i].name + ' - ' + (S.pcb.nets[i].pads || []).length
+              + ' pads' + (q.iso ? ' - so Top e Bottom ligadas; ligue as internas no painel'
+                                 : ''));
+    return true;
+  }
+
   function focar(q) {
-    if (!S.pcb || !q.comp) return false;
+    if (!S.pcb) return false;
+    if (q.net) return focarNet(q);
+    if (!q.comp) return false;
     const alvo = q.comp.trim().toUpperCase();
     const c = S.pcb.comps.find(c => (c.designator || '').toUpperCase() === alvo);
     if (!c) { setStatus('Componente ' + alvo + ' nao encontrado nesta placa'); return false; }
@@ -63,7 +109,7 @@
     selectComp(c, p ? { pad: p, net: p.net } : {});
     renderSide();              // sincroniza o painel com as camadas isoladas
     redraw();
-    enquadrarQuandoDer(40);
+    enquadrarQuandoDer(c.bbox, 40);
     setStatus('Componente ' + c.designator + ' no lado ' + c.layer
               + (p ? ', pino ' + p.name : '') + (q.iso ? ' - so a camada deste lado' : ''));
     return true;
@@ -117,7 +163,10 @@
         if (a.seq !== ultimoSeq) {
           const primeiro = ultimoSeq < 0;
           ultimoSeq = a.seq;
-          if (!primeiro && a.comp) focar({ comp: a.comp, pino: a.pino || '', iso: a.iso !== false });
+          if (!primeiro && (a.comp || a.net)) {
+            focar({ comp: a.comp || '', pino: a.pino || '', net: a.net || '',
+                    iso: a.iso !== false });
+          }
         }
       }
     } catch (e) { /* servidor fechou: a janela continua util do jeito que esta */ }
