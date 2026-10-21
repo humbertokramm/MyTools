@@ -18,6 +18,10 @@
 	Acrescenta ainda o giro da vista (``R``/``Shift+R`` ou os botoes no painel
 	Exibicao), que o viewer nao tem, para acompanhar a placa na bancada.
 
+	Trocar de placa no meio do script tambem fica na mesma aba: o servidor
+	passa a servir o projeto novo e a pagina carrega a placa sozinha. So abre
+	aba nova se nenhuma estiver acompanhando (nunca abriu ou foi fechada).
+
 	A mesma aba acompanha as chamadas seguintes (ela consulta o alvo no
 	servidor), então dá para seguir uma varredura de pontos de medição sem
 	reabrir nada.
@@ -53,8 +57,10 @@ import http.server
 import json
 import os
 import re
+import socket
 import sys
 import threading
+import time
 import webbrowser
 
 PORTA_PADRAO = 51790
@@ -150,6 +156,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 		if caminho in ('/', '/index.html', '/viewer.html'):
 			return self._envia(s.pagina.encode('utf-8'), 'text/html; charset=utf-8')
 		if caminho == '/alvo.json':
+			s.ultimo_contato = time.time()      # a aba consulta isto a cada ~0,7 s
 			return self._envia(json.dumps(s.alvo).encode('utf-8'), 'application/json')
 		if caminho == '/projeto/manifest.json':
 			return self._envia(json.dumps(s.arquivos).encode('utf-8'), 'application/json')
@@ -162,24 +169,63 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 		self.send_error(404)
 
 
+class _HTTP(http.server.ThreadingHTTPServer):
+	"""Servidor HTTP que nao divide a porta com ninguem.
+
+	O HTTPServer liga SO_REUSEADDR, e no Windows isso deixa dois sockets
+	ouvindo a mesma porta: um servidor velho que nao atende mais e um novo.
+	A aba que cai no velho fica carregando para sempre. Com
+	SO_EXCLUSIVEADDRUSE, porta ocupada vira erro na hora.
+	"""
+	allow_reuse_address = False
+	daemon_threads = True
+
+	def server_bind(self):
+		if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+			self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+		super().server_bind()
+
+
 class Servidor:
 	"""Servidor local que entrega o viewer e o projeto para o navegador."""
 
 	def __init__(self, projeto, caminho_viewer=None, porta=PORTA_PADRAO, extensoes=EXT_PROJETO):
-		self.projeto = os.path.abspath(projeto)
 		self.viewer = achar_viewer(caminho_viewer)
 		self.pagina = pagina_com_gancho(self.viewer)
-		self.arquivos = arquivos_do_projeto(self.projeto, extensoes)
-		self.alvo = {'comp': '', 'pino': '', 'net': '', 'iso': True, 'seq': 0}
+		self.extensoes = extensoes
+		self.geracao = 0                       # muda a cada troca de projeto
+		self.ultimo_contato = 0.0              # ultima consulta da aba ao alvo
+		self.aberta_em = 0.0                   # quando mandamos abrir a aba
+		self.alvo = {'comp': '', 'pino': '', 'net': '', 'iso': True, 'seq': 0, 'proj': 0}
+		self.trocar_projeto(projeto)
 		classe = type('Handler', (_Handler,), {'servidor': self})
-		self.http = http.server.ThreadingHTTPServer(('127.0.0.1', porta), classe)
+		self.http = _HTTP(('127.0.0.1', porta), classe)
 		self.porta = self.http.server_address[1]
 		threading.Thread(target=self.http.serve_forever, daemon=True).start()
+
+	def trocar_projeto(self, projeto):
+		"""Passa a servir outra placa, sem derrubar o servidor nem a aba.
+
+		A aba percebe pela 'proj' do alvo e recarrega a placa nova sozinha.
+		"""
+		pasta = os.path.abspath(projeto)
+		self.arquivos = arquivos_do_projeto(pasta, self.extensoes)
+		self.projeto = pasta
+		self.geracao += 1
 
 	def define_alvo(self, componente, pino='', isolar=True, net=''):
 		self.alvo = {'comp': str(componente or '').strip(), 'pino': str(pino or '').strip(),
 					 'net': str(net or '').strip(), 'iso': bool(isolar),
-					 'seq': self.alvo['seq'] + 1}
+					 'seq': self.alvo['seq'] + 1, 'proj': self.geracao}
+
+	def aba_viva(self, folga=3.0, carencia=20.0):
+		"""Ha uma aba acompanhando? Ela consulta o alvo a cada ~0,7 s.
+
+		Logo depois de mandar abrir, a aba ainda nao teve tempo de consultar
+		nada: a carencia evita abrir uma segunda por cima da primeira.
+		"""
+		agora = time.time()
+		return agora - self.ultimo_contato < folga or agora - self.aberta_em < carencia
 
 	def url(self):
 		from urllib.parse import quote
@@ -190,6 +236,7 @@ class Servidor:
 
 	def fechar(self):
 		self.http.shutdown()
+		self.http.server_close()      # solta a porta de verdade
 
 
 _SERVIDOR = None
@@ -208,20 +255,24 @@ def abrir(projeto, componente='', pino='', isolar=True, viewer=None, porta=PORTA
 	:return: URL servida
 	"""
 	global _SERVIDOR
-	novo = False
-	if _SERVIDOR is None or _SERVIDOR.projeto != os.path.abspath(projeto):
-		if _SERVIDOR is not None:
-			_SERVIDOR.fechar()
+	if _SERVIDOR is None:
 		try:
 			_SERVIDOR = Servidor(projeto, viewer, porta, extensoes)
-		except OSError as erro:          # porta ocupada: provavelmente outra instancia
-			if erro.errno not in (10048, 98):
+		except OSError as erro:
+			# porta ocupada (outro script com o pcbview aberto): pega qualquer
+			# porta livre em vez de disputar a mesma
+			if getattr(erro, 'winerror', None) not in (10048, 10013) and erro.errno not in (98, 13):
 				raise
 			_SERVIDOR = Servidor(projeto, viewer, 0, extensoes)
-		novo = True
+	elif _SERVIDOR.projeto != os.path.abspath(projeto):
+		# outra placa: o mesmo servidor passa a servir o projeto novo e a aba
+		# aberta recarrega sozinha - nada de derrubar e subir na mesma porta
+		_SERVIDOR.trocar_projeto(projeto)
 	_SERVIDOR.define_alvo(componente, pino, isolar, net)
 	url = _SERVIDOR.url()
-	if novo and abrir_navegador:
+	# so abre aba nova se nao ha nenhuma acompanhando (nunca abriu, ou fechou)
+	if abrir_navegador and not _SERVIDOR.aba_viva():
+		_SERVIDOR.aberta_em = time.time()
 		webbrowser.open(url)
 	return url
 

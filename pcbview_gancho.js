@@ -268,13 +268,18 @@
 
   async function inicio() {
     const q = pedido();
+    carregando = true;
     try {
       if (!S.pcb) await carregarDoServidor();
     } catch (e) {
       setStatus('Nao consegui carregar o projeto do servidor: ' + (e.message || e));
+      carregando = false;
       return;
     }
-    focar(q);
+    carregando = false;
+    // se o script ja pediu outro ponto enquanto a placa carregava, vale o ultimo
+    if (pendente) { focar(comoPedido(pendente)); pendente = null; }
+    else focar(q);
   }
 
   // pedidos seguintes (mesma aba): so refoca
@@ -284,8 +289,30 @@
   window.addEventListener('pcbview:foco', () => focar(pedido()));
 
   /* O script de bancada troca o alvo no servidor; a aba acompanha sem
-     recarregar nem perder o projeto ja lido. */
-  let ultimoSeq = -1;
+     recarregar nem perder o projeto ja lido. Quando o script passa para
+     outra placa, o 'proj' do alvo muda e a aba carrega a placa nova ali
+     mesmo, em vez de o script abrir outra aba. */
+  let ultimoSeq = -1, projAtual = null, carregando = false, pendente = null;
+  const comoPedido = a => ({ comp: a.comp || '', pino: a.pino || '', net: a.net || '',
+                             iso: a.iso !== false });
+
+  async function trocarDePlaca(a) {
+    carregando = true;
+    pendente = a;
+    setStatus('Carregando a outra placa…');
+    try {
+      await carregarDoServidor();
+    } catch (e) {
+      setStatus('Nao consegui carregar a outra placa: ' + (e.message || e));
+      carregando = false;
+      return;
+    }
+    carregando = false;
+    // o que pediram por ultimo enquanto carregava e o que vale
+    if (pendente && (pendente.comp || pendente.net)) focar(comoPedido(pendente));
+    pendente = null;
+  }
+
   async function vigiarAlvo() {
     try {
       const r = await fetch('alvo.json', { cache: 'no-store' });
@@ -294,9 +321,15 @@
         if (a.seq !== ultimoSeq) {
           const primeiro = ultimoSeq < 0;
           ultimoSeq = a.seq;
-          if (!primeiro && (a.comp || a.net)) {
-            focar({ comp: a.comp || '', pino: a.pino || '', net: a.net || '',
-                    iso: a.iso !== false });
+          if (primeiro) {
+            projAtual = a.proj;
+          } else if (a.proj !== projAtual) {
+            projAtual = a.proj;
+            trocarDePlaca(a);                  // sem await: o vigia continua
+          } else if (carregando) {
+            pendente = a;                      // aplica quando a placa terminar
+          } else if (a.comp || a.net) {
+            focar(comoPedido(a));
           }
         }
       }

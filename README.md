@@ -154,7 +154,11 @@ Dentro de um script, a mesma aba acompanha os pontos seguintes (ela consulta o a
 import pcbview
 pcbview.abrir(r"C:\Projetos\089100_PROJ", "C1052")   # 1ª chamada abre o navegador
 pcbview.abrir(r"C:\Projetos\089100_PROJ", "C200", pino="2")
+pcbview.abrir(r"C:\Projetos\076803_PROJ", "C200")   # outra placa: a mesma aba recarrega
 ```
+
+Se a aba for fechada, a próxima chamada abre outra; se outro script já estiver com a porta,
+este usa uma porta livre em vez de dividir a mesma.
 
 ### Instalar o hook commit-msg do Gerrit (Change-Id automático)
 
