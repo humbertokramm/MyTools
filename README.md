@@ -81,7 +81,6 @@ SC -->|captura CSV| CS
 | `intranetVersionChecker.py` | `check_update`, `update_local` | Verifica e baixa versões de firmware da intranet |
 | `updateLibScript.py` | `check_site`, `check_and_pull` | Atualiza repositórios Git locais |
 | `registrarhook.py` | CLI | Instala o hook `commit-msg` do Gerrit num repo (Change-Id automático); baixa via `pscp`/Pageant com fallback HTTPS |
-| `pcbzoom.py` | CLI / GUI | Apontador de componentes no PDF de montagem: busca o designador nos lados de cima e de baixo e dá zoom nele |
 | `pcbview.py` | CLI / `abrir()` | Abre o *Viewer PCB & 3D* da empresa já no componente, com o projeto carregado e só a camada do lado dele |
 
 ---
@@ -122,36 +121,6 @@ CS.hold()
 python serializefile.py COM3        # porta específica
 python serializefile.py COM3 -p     # abre PuTTY após o envio
 ```
-
-### Localizar um componente no PDF de montagem
-
-```bash
-python pcbzoom.py "Output_Job.PDF"                 # GUI: digita o designador e dá zoom
-python pcbzoom.py "Output_Job.PDF" -d R1234        # abre já posicionado no componente
-python pcbzoom.py "Output_Job.PDF" -d R1234 -o r1234.png   # só exporta o recorte
-python pcbzoom.py "Output_Job.PDF" -d CN29 --gnd   # quais pinos são GND
-python pcbzoom.py "Output_Job.PDF" --list CN       # lista os designadores e o lado
-```
-
-Na GUI: `Enter` localiza, roda do mouse dá zoom, arrastar faz pan, `R` gira a vista de 90 em
-90 graus (`Shift+R` para o outro lado) para acompanhar como a placa está na bancada, `Tab` troca de lado,
-`F3` vai para a próxima ocorrência, `0` enquadra a página e `Ctrl+S` salva a vista em PNG.
-A barra de status mostra o lado (Top/Bottom) e a zona da moldura (ex.: `E2`).
-
-**Junto com um script de bancada.** `pcbzoom.mostrar("C1052")` abre a janela na primeira
-chamada e, nas seguintes, pula direto no componente — útil para acompanhar uma varredura de
-pontos de medição sem reabrir o PDF a cada vez (aceita `"C1052 gnd"` e `"I11 pino 45"`):
-
-```python
-import pcbzoom
-pcbzoom.mostrar(s["loc"], pdf=PDF_MONTAGEM)   # antes de cada captura
-```
-
-**Pinos e GND.** Inclua no OutJob, além do Draftsman, um *PCB Print* e gere uma netlist
-Protel (`.NET`) na mesma pasta. O `pcbzoom` lê os marcadores invisíveis de pad do printout,
-cruza com a netlist e projeta os pads de volta na vista de montagem — os pinos aparecem
-marcados em cima do desenho do Draftsman, os de terra em verde. `G` destaca o primeiro pad
-de terra e o duplo clique no painel de pinos destaca o pino escolhido.
 
 ### Abrir o Viewer PCB & 3D direto no componente
 

@@ -160,6 +160,48 @@ arquivo que o script continua funcionando, desde que os nomes internos (`loadFil
 
 ---
 
+## Pedido à parte: girar a vista
+
+Esse não tem nada a ver com automação, é uso de bancada puro. Medindo com a placa na mão,
+ela quase nunca está na orientação do desenho — às vezes de cabeça para baixo, às vezes de
+lado — e aí cada componente exige uma tradução mental. O Altium também não faz isso, e é
+uma falta antiga.
+
+Girar é independente do `F`: o `F` troca o lado (espelha), girar mantém o lado e só
+acompanha como a placa está na bancada. Placa de cabeça para baixo vista por baixo é `F`
+mais 180°.
+
+O controle caberia bem no painel **Exibição**, logo abaixo do "Ver por baixo (F)", com uma
+tecla no mesmo espírito (`R` girando 90°, `Shift+R` para o outro lado).
+
+Pelo que olhei, a mudança encosta em quatro lugares:
+
+1. **`viewMatrix()`** — hoje só escala e espelho, com os termos cruzados zerados:
+   ```js
+   return [sx,0,0,sy, cv.width/2-sx*v.cx, cv.height/2-sy*v.cy];
+   ```
+   Com rotação eles deixam de ser zero.
+2. **`screenToBoard()`** — inverte assumindo matriz diagonal (`(X-m[4])/m[0]`), e passaria a
+   precisar da inversa de verdade.
+3. **`toDev()`** — mesma coisa, usa só `m[0]` e `m[3]`.
+4. **O arrasto**, no `pointermove`:
+   ```js
+   v.cx = drag.cx-(v.flip?-dx:dx)/v.s;  v.cy = drag.cy+dy/v.s;
+   ```
+   Aqui vale uma sugestão que resolve dois problemas de uma vez: medir o arrasto em
+   coordenadas de placa, com o próprio `screenToBoard` do começo e do fim do movimento. Além
+   de funcionar girado, some o caso especial do `flip`.
+
+O zoom na roda não deve precisar de nada, porque ele já trabalha a partir do
+`screenToBoard`.
+
+Cheguei a implementar isso num protótipo meu, em cima de PDF, e a receita funcionou bem: a
+vista inteira sai de uma matriz só — a mesma usada para renderizar e para converter
+coordenadas — e aí os marcadores acompanham sozinhos, sem código extra. Conferi nos quatro
+ângulos, com o marcador caindo sempre sobre o mesmo componente.
+
+---
+
 ## O lado Python (anexo)
 
 Dois arquivos:
