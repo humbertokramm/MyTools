@@ -133,7 +133,8 @@ python pcbzoom.py "Output_Job.PDF" -d CN29 --gnd   # quais pinos são GND
 python pcbzoom.py "Output_Job.PDF" --list CN       # lista os designadores e o lado
 ```
 
-Na GUI: `Enter` localiza, roda do mouse dá zoom, arrastar faz pan, `Tab` troca de lado,
+Na GUI: `Enter` localiza, roda do mouse dá zoom, arrastar faz pan, `R` gira a vista de 90 em
+90 graus (`Shift+R` para o outro lado) para acompanhar como a placa está na bancada, `Tab` troca de lado,
 `F3` vai para a próxima ocorrência, `0` enquadra a página e `Ctrl+S` salva a vista em PNG.
 A barra de status mostra o lado (Top/Bottom) e a zona da moldura (ex.: `E2`).
 

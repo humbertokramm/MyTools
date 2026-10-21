@@ -41,6 +41,7 @@
 	- ``roda do mouse``: zoom in/out no ponteiro
 	- ``arrastar``     : pan
 	- ``+`` / ``-``    : zoom in/out
+	- ``R``            : gira a vista 90° (``Shift+R`` para o outro lado)
 	- ``0``            : enquadra a página inteira
 	- ``G``            : destaca o primeiro pad de GND do componente
 	- ``duplo clique`` : no painel de pinos, destaca o pad daquele pino
@@ -602,6 +603,7 @@ class App:
 		self.prj = projeto
 		self.lado = projeto.lados[0]
 		self.zoom = 1.0
+		self.giro = 0               # graus; acompanha a placa na bancada
 		self.centro = (self.lado.rect.width / 2, self.lado.rect.height / 2)
 		self.achados = []          # [(lado, rect), ...] do designador atual
 		self.indice = 0
@@ -701,6 +703,8 @@ class App:
 		r.bind('<Key-0>', lambda e: self.enquadrar())
 		r.bind('<Key-z>', lambda e: self.ir_para(self.indice))
 		r.bind('<Key-g>', lambda e: self.ir_para_gnd())
+		r.bind('<Key-r>', lambda e: self.girar(90))
+		r.bind('<Key-R>', lambda e: self.girar(-90))
 		r.bind('<F3>', lambda e: self.proxima(1))
 		r.bind('<Shift-F3>', lambda e: self.proxima(-1))
 		r.bind('<Tab>', self._tab)
@@ -872,7 +876,8 @@ class App:
 		cw = max(self.canvas.winfo_width(), 200)
 		ch = max(self.canvas.winfo_height(), 200)
 		pr = self.lado.rect
-		self.zoom = min(cw / pr.width, ch / pr.height)
+		vista = fitz.Rect(pr) * fitz.Matrix(1, 1).prerotate(self.giro)
+		self.zoom = min(cw / vista.width, ch / vista.height)
 		self.centro = (pr.width / 2, pr.height / 2)
 		self.agendar()
 
@@ -897,19 +902,44 @@ class App:
 		self._pan_ref = (event.x, event.y, self.centro)
 
 	def _pan(self, event):
-		x0, y0, (cx, cy) = self._pan_ref
-		self.centro = (cx - (event.x - x0) / self.zoom, cy - (event.y - y0) / self.zoom)
+		# mede o arrasto em coordenadas da pagina, para funcionar girado
+		x0, y0, ref = self._pan_ref
+		self.centro = ref
+		px0, py0 = self._tela_para_pdf(x0, y0)
+		px1, py1 = self._tela_para_pdf(event.x, event.y)
+		self.centro = (ref[0] - (px1 - px0), ref[1] - (py1 - py0))
 		self.agendar()
+
+	def matriz(self):
+		"""Matriz da vista: zoom e giro, a mesma que o render usa.
+
+		Tirar as duas conversoes daqui garante que os marcadores nao possam
+		divergir do desenho quando a placa esta girada.
+		"""
+		return fitz.Matrix(self.zoom, self.zoom).prerotate(self.giro)
+
+	def _centro_dev(self, m=None):
+		m = m or self.matriz()
+		return fitz.Point(*self.centro) * m
 
 	def _tela_para_pdf(self, x, y):
 		cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
-		cx, cy = self.centro
-		return (cx + (x - cw / 2) / self.zoom, cy + (y - ch / 2) / self.zoom)
+		m = self.matriz()
+		c = self._centro_dev(m)
+		p = fitz.Point(c.x + x - cw / 2, c.y + y - ch / 2) * ~m
+		return (p.x, p.y)
 
 	def _pdf_para_tela(self, x, y):
 		cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
-		cx, cy = self.centro
-		return (cw / 2 + (x - cx) * self.zoom, ch / 2 + (y - cy) * self.zoom)
+		m = self.matriz()
+		c = self._centro_dev(m)
+		p = fitz.Point(x, y) * m
+		return (cw / 2 + p.x - c.x, ch / 2 + p.y - c.y)
+
+	def girar(self, passo):
+		"""Gira a vista em 90 graus, para acompanhar a placa na bancada."""
+		self.giro = (self.giro + passo) % 360
+		self.agendar()
 
 	def agendar(self):
 		"""Agrupa redesenhos seguidos (resize, pan) num unico render."""
@@ -929,14 +959,22 @@ class App:
 		cy = min(max(cy, pr.y0 - meia_h / 2), pr.y1 + meia_h / 2)
 		self.centro = (cx, cy)
 
-		clip = fitz.Rect(cx - meia_w, cy - meia_h, cx + meia_w, cy + meia_h) & pr
+		# o pedaco de pagina a renderizar e o que cabe nos cantos da tela,
+		# que com a vista girada nao e mais um retangulo alinhado
+		cantos = [self._tela_para_pdf(x, y)
+				  for x, y in ((0, 0), (cw, 0), (0, ch), (cw, ch))]
+		clip = fitz.Rect(min(p[0] for p in cantos), min(p[1] for p in cantos),
+						 max(p[0] for p in cantos), max(p[1] for p in cantos)) & pr
 		self.canvas.delete('all')
 		if clip.is_empty:
 			return
-		pix = self.lado.page.get_pixmap(matrix=fitz.Matrix(self.zoom, self.zoom), clip=clip)
+		mat = self.matriz()
+		pix = self.lado.page.get_pixmap(matrix=mat, clip=clip)
 		self._img = self.tk.PhotoImage(data=pix.tobytes('ppm'))
-		ox, oy = self._pdf_para_tela(clip.x0, clip.y0)
-		self.canvas.create_image(round(ox), round(oy), image=self._img, anchor='nw')
+		# pix.x/pix.y sao a posicao do recorte ja girado, no espaco da matriz
+		c = self._centro_dev(mat)
+		self.canvas.create_image(round(cw / 2 + pix.x - c.x), round(ch / 2 + pix.y - c.y),
+								 image=self._img, anchor='nw')
 
 		info = 'lado %s | zoom %.0f%% | %d componente(s) na lista' % (
 			self.lado.nome, self.zoom * 100, self.n_lista)
@@ -968,6 +1006,8 @@ class App:
 					nome, ocorr, lado.nome, lado.zona(r) or '?', self.zoom * 100)
 			self.canvas.create_text(x1 + m + 8, y0 - m - 8, text=nome, anchor='sw',
 									fill='#ff2d2d', font=('Consolas', 13, 'bold'))
+		if self.giro:
+			info = '%s | girado %d graus' % (info, self.giro)
 		if self.msg:
 			info = '%s   <<< %s' % (info, self.msg)
 		self.status.configure(text=info)
