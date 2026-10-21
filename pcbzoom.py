@@ -51,6 +51,10 @@
 	- ``Ctrl+S``       : salva a vista atual em PNG
 	- ``Esc``          : volta o foco para o campo de busca
 
+	As teclas de uma letra valem com o foco no desenho; enquanto se digita no
+	campo de busca elas são texto. Depois do ``Enter`` o foco já vai para o
+	desenho, e o ``Esc`` traz de volta para a busca.
+
 **Requisitos**
 	``pymupdf``
 """
@@ -696,15 +700,15 @@ class App:
 		c.bind('<Button-1>', lambda e: c.focus_set(), add='+')
 
 		r = self.root
-		r.bind('<plus>', lambda e: self.aplicar_zoom(1.25))
-		r.bind('<KP_Add>', lambda e: self.aplicar_zoom(1.25))
-		r.bind('<minus>', lambda e: self.aplicar_zoom(1 / 1.25))
-		r.bind('<KP_Subtract>', lambda e: self.aplicar_zoom(1 / 1.25))
-		r.bind('<Key-0>', lambda e: self.enquadrar())
-		r.bind('<Key-z>', lambda e: self.ir_para(self.indice))
-		r.bind('<Key-g>', lambda e: self.ir_para_gnd())
-		r.bind('<Key-r>', lambda e: self.girar(90))
-		r.bind('<Key-R>', lambda e: self.girar(-90))
+		r.bind('<plus>', self._atalho(lambda: self.aplicar_zoom(1.25)))
+		r.bind('<KP_Add>', self._atalho(lambda: self.aplicar_zoom(1.25)))
+		r.bind('<minus>', self._atalho(lambda: self.aplicar_zoom(1 / 1.25)))
+		r.bind('<KP_Subtract>', self._atalho(lambda: self.aplicar_zoom(1 / 1.25)))
+		r.bind('<Key-0>', self._atalho(self.enquadrar))
+		r.bind('<Key-z>', self._atalho(lambda: self.ir_para(self.indice)))
+		r.bind('<Key-g>', self._atalho(self.ir_para_gnd))
+		r.bind('<Key-r>', self._atalho(lambda: self.girar(90)))
+		r.bind('<Key-R>', self._atalho(lambda: self.girar(-90)))
 		r.bind('<F3>', lambda e: self.proxima(1))
 		r.bind('<Shift-F3>', lambda e: self.proxima(-1))
 		r.bind('<Tab>', self._tab)
@@ -759,7 +763,11 @@ class App:
 		self.indice = 0
 		self.ir_para(0)
 		if foco:
+			# com o componente achado, o foco vai para o desenho: e la que as
+			# teclas de uma letra valem (R gira, G vai no GND, 0 enquadra).
+			# Esc traz o foco de volta para a busca.
 			self.busca.select_range(0, 'end')
+			self.canvas.focus_set()
 
 	# ------------------------------------------------------------ pinos
 	def _preencher_pinos(self, ref, lado=None):
@@ -935,6 +943,23 @@ class App:
 		c = self._centro_dev(m)
 		p = fitz.Point(x, y) * m
 		return (cw / 2 + p.x - c.x, ch / 2 + p.y - c.y)
+
+	def _atalho(self, acao):
+		"""Atalho de uma tecla que nao atrapalha quem esta digitando na busca.
+
+		As teclas soltas ('r', 'g', '0', 'z') sao presas na janela, entao
+		tambem disparavam no meio de um designador: digitar 'R1052' girava a
+		vista e o '0' enquadrava a pagina.
+		"""
+		def disparar(event=None):
+			try:
+				if self.root.focus_get() is self.busca:
+					return None
+			except Exception:
+				pass
+			acao()
+			return 'break'
+		return disparar
 
 	def girar(self, passo):
 		"""Gira a vista em 90 graus, para acompanhar a placa na bancada."""
