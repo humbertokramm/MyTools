@@ -33,8 +33,11 @@
 		pcbview.abrir(r'C:\\Projetos\\089100_PROJ', 'C1052')   # abre a aba
 		pcbview.abrir(r'C:\\Projetos\\089100_PROJ', 'C200', pino='2')
 
-	O HTML do viewer é procurado em ``PCBVIEW_HTML``, em Downloads e ao lado
-	deste arquivo; dá para apontar com ``viewer=`` / ``--viewer``.
+	O HTML do viewer fica em ``viewer/Viewer_PCB_3D.html``, no próprio
+	repositório, numa cópia intacta do arquivo do Diogo — o gancho é injetado
+	só na hora de servir, então atualizar é substituir o arquivo. A busca
+	tenta, nesta ordem: ``viewer=``/``--viewer``, a variável ``PCBVIEW_HTML``,
+	``viewer/``, a pasta deste arquivo, ``~/Downloads`` e o diretório atual.
 
 **Requisitos**
 	Só a biblioteca padrão. O gancho fica em ``pcbview_gancho.js``, ao lado
@@ -64,8 +67,11 @@ def achar_viewer(dado=None):
 		candidatos.append(dado)
 	if os.environ.get('PCBVIEW_HTML'):
 		candidatos.append(os.environ['PCBVIEW_HTML'])
-	pastas = [os.path.join(os.path.expanduser('~'), 'Downloads'),
-			  os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
+	aqui = os.path.dirname(os.path.abspath(__file__))
+	# a copia do repositorio vem antes do Downloads, para o comportamento nao
+	# depender do que sobrou na pasta de downloads da maquina
+	pastas = [os.path.join(aqui, 'viewer'), aqui,
+			  os.path.join(os.path.expanduser('~'), 'Downloads'), os.getcwd()]
 	for pasta in pastas:
 		for nome in NOMES_VIEWER:
 			candidatos.append(os.path.join(pasta, nome))
