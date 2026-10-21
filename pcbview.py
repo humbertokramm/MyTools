@@ -226,7 +226,9 @@ def main(argv=None):
 		description='Abre o Viewer PCB & 3D no componente, com a camada do lado dele.')
 	ap.add_argument('projeto', help='pasta do projeto Altium (com o .PcbDoc)')
 	ap.add_argument('-c', '--componente', default='', help='designador, ex. C1052')
-	ap.add_argument('-n', '--net', default='', help='nome da net, ex. DGND')
+	ap.add_argument('-n', '--net', default='',
+					help='nome da net, ex. DGND; aceita trecho ("SWITCH_TRST" acha '
+						 '"#SWITCH_TRST"). Nome com # precisa de aspas no shell')
 	ap.add_argument('-p', '--pino', default='', help='pino a destacar, ex. 2')
 	ap.add_argument('--sem-isolar', action='store_true',
 					help='mantem todas as camadas visiveis')

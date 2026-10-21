@@ -160,6 +160,10 @@ python pcbview.py C:\Projetos\089100_PROJ -c C200 -p 2  # destacando o pino 2
 python pcbview.py C:\Projetos\089100_PROJ -n CORE_VDD   # uma net inteira
 ```
 
+O nome da net aceita trecho: `-n SWITCH_TRST` acha `#SWITCH_TRST`. Com o `#` literal são
+necessárias aspas (`-n "#SWITCH_TRST"`), senão o shell trata o resto da linha como comentário
+e o argumento nem chega ao script.
+
 Uma página `file://` não consegue ler pasta por caminho, então o `pcbview` serve o viewer e o
 `.PcbDoc` em `http://127.0.0.1` e injeta um gancho que carrega o projeto sozinho, seleciona o
 componente, vira a placa se ele estiver embaixo e deixa visível só a camada daquele lado.
