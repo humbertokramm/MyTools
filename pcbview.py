@@ -15,6 +15,9 @@
 	cobre - uma trilha por layer interno sumiria e pareceria que nada foi
 	selecionado. O status diz em quais camadas o cobre esta.
 
+	Acrescenta ainda o giro da vista (``R``/``Shift+R`` ou os botoes no painel
+	Exibicao), que o viewer nao tem, para acompanhar a placa na bancada.
+
 	A mesma aba acompanha as chamadas seguintes (ela consulta o alvo no
 	servidor), então dá para seguir uma varredura de pontos de medição sem
 	reabrir nada.

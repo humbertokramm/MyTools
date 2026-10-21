@@ -145,6 +145,107 @@
     return true;
   }
 
+  /* ------------------------------------------------------------------
+     Girar a vista
+
+     Medindo com a placa na mao, ela quase nunca esta na orientacao do
+     desenho. Girar e independente do "Ver por baixo" (F): aquele troca o
+     lado, este so acompanha como a placa esta na bancada.
+
+     O viewer monta toda a vista numa matriz so, entao basta acrescentar a
+     rotacao nela e refazer as duas conversoes que assumiam matriz diagonal.
+     ------------------------------------------------------------------ */
+  let giro = 0;
+
+  function matrizDaVista() {
+    const d = devicePixelRatio || 1, v = S.pcbView;
+    const sx = (v.flip ? -1 : 1) * v.s * d, sy = -v.s * d;
+    const t = giro * Math.PI / 180, co = Math.cos(t), si = Math.sin(t);
+    const a = sx * co, b = sx * si, c = -sy * si, e = sy * co;
+    return [a, b, c, e,
+            cv.width / 2 - (a * v.cx + c * v.cy),
+            cv.height / 2 - (b * v.cx + e * v.cy)];
+  }
+
+  viewMatrix = matrizDaVista;
+
+  screenToBoard = function (ex, ey) {
+    const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+    const m = viewMatrix();
+    const X = (ex - r.left) * d - m[4], Y = (ey - r.top) * d - m[5];
+    const det = m[0] * m[3] - m[1] * m[2];
+    if (!det) return [0, 0];
+    return [(m[3] * X - m[2] * Y) / det, (m[0] * Y - m[1] * X) / det];
+  };
+
+  toDev = function (x, y) {
+    const m = viewMatrix();
+    return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+  };
+
+  /* O arrasto do viewer calcula o pan direto em x/y da tela. Em vez de
+     interferir no listener dele (que tambem cuida do HUD e de separar
+     clique de arrasto), este corrige o resultado logo depois, no mesmo
+     evento - e so quando ha giro. */
+  let arrasto = null;
+  cv.addEventListener('pointerdown', e => {
+    arrasto = { x: e.clientX, y: e.clientY, cx: S.pcbView.cx, cy: S.pcbView.cy };
+  });
+  const soltar = () => { arrasto = null; };
+  cv.addEventListener('pointerup', soltar);
+  cv.addEventListener('pointercancel', soltar);
+  cv.addEventListener('pointermove', e => {
+    if (!giro || !arrasto || !S.pcb) return;
+    if (Math.abs(e.clientX - arrasto.x) + Math.abs(e.clientY - arrasto.y) <= 3) return;
+    S.pcbView.cx = arrasto.cx; S.pcbView.cy = arrasto.cy;   // desfaz a conta sem giro
+    const ini = screenToBoard(arrasto.x, arrasto.y);
+    const fim = screenToBoard(e.clientX, e.clientY);
+    S.pcbView.cx = arrasto.cx - (fim[0] - ini[0]);
+    S.pcbView.cy = arrasto.cy - (fim[1] - ini[1]);
+    redraw();
+  });
+
+  function girarVista(passo) {
+    giro = (((giro + passo) % 360) + 360) % 360;
+    const mostra = document.getElementById('pcbviewGiroValor');
+    if (mostra) mostra.textContent = giro + '°';
+    redraw();
+  }
+
+  /* O controle vai no painel Exibicao, junto do "Ver por baixo (F)", que e
+     a outra transformacao de vista. O painel e remontado pelo renderSide,
+     entao o botao e recolocado depois dele. */
+  function poeControleDeGiro() {
+    const flip = document.getElementById('optFlip');
+    if (!flip || document.getElementById('pcbviewGiro')) return;
+    const linha = flip.closest('label') || flip.parentNode;
+    if (!linha || !linha.parentNode) return;
+    const caixa = document.createElement('div');
+    caixa.id = 'pcbviewGiro';
+    caixa.className = 'opt';
+    caixa.style.cssText = 'display:flex;gap:6px;align-items:center;margin:4px 0';
+    caixa.innerHTML = '<span>Girar (R)</span>'
+      + '<button type="button" data-giro="-90" title="Girar para a esquerda">⟲</button>'
+      + '<button type="button" data-giro="90" title="Girar para a direita">⟳</button>'
+      + '<span id="pcbviewGiroValor">' + giro + '°</span>';
+    linha.parentNode.insertBefore(caixa, linha.nextSibling);
+    caixa.querySelectorAll('button').forEach(b => {
+      b.onclick = () => girarVista(parseInt(b.dataset.giro, 10));
+    });
+  }
+
+  const renderSideDoViewer = renderSide;
+  renderSide = function () {
+    const r = renderSideDoViewer.apply(this, arguments);
+    try { poeControleDeGiro(); } catch (e) {}
+    return r;
+  };
+
+  addEventListener('keydown', e => {
+    if (e.target && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') return;
+    if (e.key === 'r' || e.key === 'R') girarVista(e.shiftKey ? -90 : 90);
+  });
+
   /* Monta objetos File a partir do que o pcbview.py serve e entrega ao
      mesmo caminho que o botao "Abrir pasta..." usa. */
   async function carregarDoServidor() {

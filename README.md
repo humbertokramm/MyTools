@@ -140,6 +140,10 @@ componente, vira a placa se ele estiver embaixo e deixa visível só a camada da
 Com `-n`/`net=` ele seleciona uma net inteira e liga a Top, a Bottom e as camadas em que
 aquela net tem cobre — uma trilha que corre por um layer interno sumiria, e pareceria que
 nada foi selecionado. A barra de status diz em quais camadas o cobre está.
+Também acrescenta o giro da vista, que o viewer não tem: `R` gira 90° no sentido horário,
+`Shift+R` no outro, ou os botões ⟲ ⟳ no painel **Exibição**, ao lado do "Ver por baixo (F)".
+É independente do `F` — aquele troca o lado, este só acompanha como a placa está na bancada.
+
 O HTML original não é alterado — a injeção acontece na hora de servir. A cópia usada fica em
 `viewer/Viewer_PCB_3D.html`, intacta como o Diogo publicou; quando sair versão nova, é só
 substituir esse arquivo.

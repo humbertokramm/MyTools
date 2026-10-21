@@ -195,10 +195,16 @@ Pelo que olhei, a mudança encosta em quatro lugares:
 O zoom na roda não deve precisar de nada, porque ele já trabalha a partir do
 `screenToBoard`.
 
-Cheguei a implementar isso num protótipo meu, em cima de PDF, e a receita funcionou bem: a
-vista inteira sai de uma matriz só — a mesma usada para renderizar e para converter
-coordenadas — e aí os marcadores acompanham sozinhos, sem código extra. Conferi nos quatro
-ângulos, com o marcador caindo sempre sobre o mesmo componente.
+Para não ficar só na sugestão, fiz isso por fora, no gancho que o `pcbview.py` injeta: troca
+o `viewMatrix`, o `screenToBoard` e o `toDev`, e corrige o arrasto num listener registrado
+depois do teu, no mesmo evento — só quando há giro. Conferi nos quatro ângulos: o componente
+fica no centro, a ida-e-volta tela↔placa erra zero, o ponto sob o cursor não sai do lugar no
+arrasto nem na roda, e o clique continua acertando o pad certo. A 0° a matriz sai idêntica à
+tua, então sem giro nada muda.
+
+O listener duplo é gambiarra de quem está do lado de fora, claro — no teu código isso vira
+meia dúzia de linhas no lugar certo. O botão eu coloquei exatamente no painel Exibição, como
+"Girar (R) ⟲ ⟳", para você ver se o lugar faz sentido.
 
 ---
 
