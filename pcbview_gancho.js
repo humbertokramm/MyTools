@@ -72,10 +72,29 @@
     S.active = null;
   }
 
+  /* Nomes de net costumam ter prefixo que ninguem digita ('#SWITCH_TRST'),
+     entao aceita trecho quando ele identifica uma net so. */
+  function acharNet(alvo) {
+    const nomes = S.pcb.nets.map(n => (n.name || '').toUpperCase());
+    const exato = nomes.indexOf(alvo);
+    if (exato >= 0) return { i: exato };
+    const perto = [];
+    for (let k = 0; k < nomes.length; k++) if (nomes[k].includes(alvo)) perto.push(k);
+    if (perto.length === 1) return { i: perto[0] };
+    return { i: -1, perto: perto };
+  }
+
   function focarNet(q) {
     const alvo = q.net.trim().toUpperCase();
-    const i = S.pcb.nets.findIndex(n => (n.name || '').toUpperCase() === alvo);
-    if (i < 0) { setStatus('Net ' + alvo + ' nao encontrada nesta placa'); return false; }
+    const achado = acharNet(alvo);
+    const i = achado.i;
+    if (i < 0) {
+      const perto = (achado.perto || []).map(k => S.pcb.nets[k].name);
+      setStatus(perto.length
+        ? 'Net "' + alvo + '" casa com ' + perto.length + ': ' + perto.slice(0, 8).join(', ')
+        : 'Net ' + alvo + ' nao encontrada nesta placa');
+      return false;
+    }
     if (S.view !== 'pcb') setView('pcb');
     S.selComp = null; S.schSel = null;
     selectNet(i);
