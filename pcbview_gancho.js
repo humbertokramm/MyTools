@@ -60,16 +60,27 @@
   window.addEventListener('resize', retomar);
   document.addEventListener('visibilitychange', retomar);
 
-  /* Uma net costuma andar por muitas camadas, e qual delas interessa depende
-     do que se vai medir. Entao deixa so as duas externas ligadas e o resto
-     por conta de quem esta olhando. */
+  /* Deixa ligadas as duas externas (contexto para achar onde encostar a
+     ponta) mais as camadas em que a net realmente tem cobre - uma trilha
+     que corre por um layer interno sumiria, e parece que nada foi
+     selecionado. Devolve as camadas da net, para o aviso. */
   function isolaNet() {
     const manter = new Set([IDS.topCobre, IDS.botCobre, IDS.padsVias]
                            .filter(id => S.pcb.layers.has(id)));
+    const daNet = [];
+    if (S.netGeo) {
+      for (const [l, g] of S.netGeo) {
+        if (g.any && typeof l === 'number' && S.pcb.layers.has(l)) {
+          manter.add(l);
+          daNet.push(l);
+        }
+      }
+    }
     manter.add('holes');
     manter.add('board');
     S.visible = manter;
     S.active = null;
+    return daNet;
   }
 
   /* Nomes de net costumam ter prefixo que ninguem digita ('#SWITCH_TRST'),
@@ -98,15 +109,15 @@
     if (S.view !== 'pcb') setView('pcb');
     S.selComp = null; S.schSel = null;
     selectNet(i);
-    if (q.iso) isolaNet();
+    const daNet = q.iso ? isolaNet() : [];
     const b = new BBox();
     (S.pcb.nets[i].pads || []).forEach(p => b.add(p.x, p.y, Math.max(p.sx, p.sy) / 2));
     if (b.ok) enquadrarQuandoDer(b, 40);
     renderSide();
     redraw();
+    const nomes = daNet.map(l => (S.pcb.layers.get(l) || {}).name || l);
     setStatus('Net ' + S.pcb.nets[i].name + ' - ' + (S.pcb.nets[i].pads || []).length
-              + ' pads' + (q.iso ? ' - so Top e Bottom ligadas; ligue as internas no painel'
-                                 : ''));
+              + ' pads' + (nomes.length ? ' - cobre em ' + nomes.join(', ') : ''));
     return true;
   }
 

@@ -167,8 +167,9 @@ e o argumento nem chega ao script.
 Uma página `file://` não consegue ler pasta por caminho, então o `pcbview` serve o viewer e o
 `.PcbDoc` em `http://127.0.0.1` e injeta um gancho que carrega o projeto sozinho, seleciona o
 componente, vira a placa se ele estiver embaixo e deixa visível só a camada daquele lado.
-Com `-n`/`net=` ele seleciona uma net inteira e deixa ligadas só a Top e a Bottom — por quais
-camadas interessa olhar varia demais, então as internas ficam a um clique no painel.
+Com `-n`/`net=` ele seleciona uma net inteira e liga a Top, a Bottom e as camadas em que
+aquela net tem cobre — uma trilha que corre por um layer interno sumiria, e pareceria que
+nada foi selecionado. A barra de status diz em quais camadas o cobre está.
 O HTML original não é alterado — a injeção acontece na hora de servir.
 
 Dentro de um script, a mesma aba acompanha os pontos seguintes (ela consulta o alvo no servidor):

@@ -11,8 +11,9 @@
 	gancho injetado na página busca o ``.PcbDoc`` por ``fetch``, acha o
 	componente, isola a camada e vira a placa se ele estiver embaixo. Tambem
 	aceita o nome de uma net no lugar do componente: nesse caso seleciona a
-	net inteira e deixa ligadas so a Top e a Bottom, porque por quais camadas
-	interessa olhar varia demais - as internas ficam a um clique no painel.
+	net inteira, ligando a Top, a Bottom e as camadas em que aquela net tem
+	cobre - uma trilha por layer interno sumiria e pareceria que nada foi
+	selecionado. O status diz em quais camadas o cobre esta.
 
 	A mesma aba acompanha as chamadas seguintes (ela consulta o alvo no
 	servidor), então dá para seguir uma varredura de pontos de medição sem
@@ -194,7 +195,7 @@ def abrir(projeto, componente='', pino='', isolar=True, viewer=None, porta=PORTA
 	:param pino: pino a destacar, ex. ``'2'`` (opcional)
 	:param net: nome da net, ex. ``'DGND'``; tem prioridade sobre o componente
 	:param isolar: para um componente, deixa visivel so a camada do lado dele;
-		para uma net, so as camadas em que ela tem cobre
+		para uma net, a Top, a Bottom e as camadas em que ela tem cobre
 	:return: URL servida
 	"""
 	global _SERVIDOR
