@@ -10,12 +10,34 @@ from tektronix_net import TektronixNetScope
 from keysight import KeysightScope
 from scope_ssh import SshScope
 
+class _ScopeAusente:
+    """Ocupa o lugar do driver quando o script seguiu sem osciloscopio.
+
+    Qualquer tentativa de falar com o instrumento para aqui, dizendo o
+    porque, em vez de estourar um AttributeError em NoneType la na frente,
+    longe da causa. O close() e no-op para o fim de script continuar valendo.
+    """
+
+    offline = True
+
+    def close(self):
+        pass
+
+    def __getattr__(self, nome):
+        raise RuntimeError(
+            f"sem osciloscopio: '{nome}' precisa do instrumento. O script "
+            f"seguiu sem ele -- deixe get=False nos cenarios que nao vao "
+            f"capturar, ou conecte o aparelho e rode de novo.")
+
+
 class Scope:
 
     def __init__(self, resource=None, debug=False, overwrite=False):
         self.overwrite = overwrite
         self.inst = None
         self.rm = None
+        # True quando o usuario optou por seguir sem o instrumento.
+        self.offline = False
 
         # -------------------------------------------------
         # SSH connection (oscilloscope on a remote Linux host)
@@ -44,8 +66,21 @@ class Scope:
             resource = DS.select_visa_resource()
 
             if resource is None or "USB" not in resource:
-                print("Invalid instrument!!")
-                exit()
+                # Nem todo script usa o osciloscopio de verdade: muitos so
+                # reprocessam CSV ja capturado. Matar o script ai obrigava a
+                # ligar o aparelho so para gerar grafico.
+                dh.print_colored("Osciloscopio nao encontrado.", 'RED')
+                r = input("\tSeguir sem ele? (s/N): ").strip().lower()
+                if r != 's':
+                    # Padrao e abortar: quem ia capturar nao perde a medida
+                    # por ter batido ENTER no reflexo.
+                    print("Invalid instrument!!")
+                    exit()
+                dh.print_colored("Seguindo sem osciloscopio.", 'YELLOW')
+                self.offline = True
+                self.resource = None
+                self.driver = _ScopeAusente()
+                return
             else:
                 print(f"resource = {resource}")
 
@@ -338,6 +373,14 @@ class Scope:
         owned = scope is None
         if owned:
             scope = Scope(resource, debug, overwrite)
+
+        # Falha de uma vez: sem esta checagem a captura avanca passo a passo
+        # e cada um reclama do instrumento ausente, embolando a saida.
+        if getattr(scope, 'offline', False):
+            raise RuntimeError(
+                "sem osciloscopio: a captura precisa do instrumento. O "
+                "script seguiu sem ele -- deixe get=False nos cenarios que "
+                "nao vao capturar, ou conecte o aparelho e rode de novo.")
 
         if isinstance(channel, str):
             channel = [channel]
