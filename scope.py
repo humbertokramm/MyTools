@@ -69,17 +69,11 @@ class Scope:
                 # Nem todo script usa o osciloscopio de verdade: muitos so
                 # reprocessam CSV ja capturado. Matar o script ai obrigava a
                 # ligar o aparelho so para gerar grafico.
-                dh.print_colored("Osciloscopio nao encontrado.", 'RED')
-                r = input("\tSeguir sem ele? (s/N): ").strip().lower()
-                if r != 's':
-                    # Padrao e abortar: quem ia capturar nao perde a medida
-                    # por ter batido ENTER no reflexo.
+                if not self._seguir_sem_scope("Osciloscopio nao encontrado."):
                     print("Invalid instrument!!")
                     exit()
-                dh.print_colored("Seguindo sem osciloscopio.", 'YELLOW')
-                self.offline = True
                 self.resource = None
-                self.driver = _ScopeAusente()
+                self._sem_scope()
                 return
             else:
                 print(f"resource = {resource}")
@@ -96,9 +90,16 @@ class Scope:
             except Exception:
                 dh.print_colored(f"Connection attempt {attempt + 1} failed:", 'RED')
                 print(f'RESOURCE = "{resource}"')
-                sleep(2)
                 if attempt > 1:
-                    exit()
+                    # Mesma saida do instrumento nao detectado: o script pode
+                    # nao precisar capturar nada. Pergunta antes do sleep,
+                    # que aqui so atrasaria a resposta.
+                    if not self._seguir_sem_scope(
+                            "Nao consegui conectar no osciloscopio."):
+                        exit()
+                    self._sem_scope()
+                    return
+                sleep(2)
 
         self.inst.timeout = 10000
 
@@ -118,6 +119,24 @@ class Scope:
         else:
             raise Exception("Unsupported instrument")
             
+    # ---------------------------------------------------------
+    # sem instrumento
+    # ---------------------------------------------------------
+    def _seguir_sem_scope(self, motivo):
+        """Pergunta se o script segue sem o instrumento.
+
+        O padrao e abortar: quem ia capturar nao perde a medida por ter
+        batido ENTER no reflexo.
+        """
+        dh.print_colored(motivo, 'RED')
+        return input("\tSeguir sem ele? (s/N): ").strip().lower() == 's'
+
+    def _sem_scope(self):
+        """Deixa o objeto utilizavel sem instrumento."""
+        dh.print_colored("Seguindo sem osciloscopio.", 'YELLOW')
+        self.offline = True
+        self.driver = _ScopeAusente()
+
     # ---------------------------------------------------------
     # file overwrite guard
     # ---------------------------------------------------------
