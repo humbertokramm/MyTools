@@ -148,15 +148,32 @@ Serve só o `.PcbDoc` por padrão: com as dezenas de `.SchDoc` do nosso projeto 
 bem mais lenta, e para medir na placa o esquemático não é necessário.
 
 E, para a mesma aba acompanhar uma varredura sem recarregar, a página consulta um alvo no
-servidor a cada 700 ms (`{comp, pino, net, iso, seq}`) e refoca quando o `seq` muda. É
+servidor a cada 700 ms (`{comp, pino, net, iso, seq, proj}`) e refoca quando o `seq` muda. É
 simples, mas dá para pensar em algo melhor do teu lado — um `postMessage` padronizado, por
 exemplo.
+
+O `proj` é para trocar de placa no meio de uma varredura: quando ele muda, a página busca o
+manifesto novo e chama o teu `loadFiles` **de novo**, na mesma aba. Funcionou limpo de
+primeira — o `loadFiles` já zera o estado direito (`S.pcb`, seleção, net) —, o que é um ponto a
+favor do teu carregador. Testei indo da 089100 (3831 componentes) para a 076803 (1477) e
+depois para outro componente da mesma placa, sem recarregar a página.
 
 **Importante:** o teu arquivo não é alterado. O Python desempacota o documento base64 do
 visualizador de projeto, injeta o gancho e reempacota **na hora de servir**; o
 `Viewer_PCB_3D.html` em disco continua intacto. Se você mudar o viewer, basta trocar o
-arquivo que o script continua funcionando, desde que os nomes internos (`loadFiles`,
-`selectComp`, `selectNet`, `S.visible`, `renderSide`) se mantenham.
+arquivo que o script continua funcionando, **desde que os nomes internos que o gancho usa se
+mantenham**. São estes:
+
+| o gancho… | nomes do viewer |
+|---|---|
+| chama | `loadFiles`, `selectComp`, `selectNet`, `setView`, `setStatus`, `fitPCB`, `redraw`, `BBox` |
+| lê e altera | `S.pcb`, `S.visible`, `S.active`, `S.view`, `S.selComp`, `S.schSel`, `S.netGeo`, `S.pcbView` (`cx`, `cy`, `s`, `flip`) |
+| **substitui** (giro) | `viewMatrix`, `screenToBoard`, `toDev` |
+| envolve | `renderSide` (para repor o botão de giro depois que o painel é remontado) |
+| usa | `cv` (o canvas), `#optFlip`, ids de camada `1`, `32`, `33`, `34`, `74`, `'holes'`, `'board'` |
+
+Os três substituídos são os mais sensíveis: se a assinatura ou o formato da matriz mudar, o
+giro quebra antes de qualquer outra coisa.
 
 ---
 
@@ -221,21 +238,24 @@ Uso na linha de comando:
 python pcbview.py C:\Projetos\089100_PROJ -c C1052       # componente
 python pcbview.py C:\Projetos\089100_PROJ -c C200 -p 2   # pino 2 e a net dele
 python pcbview.py C:\Projetos\089100_PROJ -n CORE_VDD    # net inteira
+python pcbview.py C:\Projetos\089100_PROJ -n SWITCH_TRST # trecho basta: acha #SWITCH_TRST
 ```
 
 E dentro de um script de medição, que é o caso real: a primeira chamada abre o navegador, as
-seguintes só reposicionam a mesma aba.
+seguintes só reposicionam a mesma aba — inclusive quando o ponto seguinte é de outra placa.
 
 ```python
 import pcbview
 
-PROJ = r"C:\Projetos\089100_PROJ"
-
 for ponto in pontos_de_medicao:
-    pcbview.abrir(PROJ, ponto["componente"])   # a aba pula no componente
+    # projeto pode mudar de um ponto para o outro: a mesma aba carrega a placa nova
+    pcbview.abrir(ponto["projeto"], ponto["componente"])
     input("Enter para capturar: ")
     captura(ponto)
 ```
+
+Na aba servida assim, além do que o teu viewer já faz, aparecem só duas coisas: o "Girar
+(R) ⟲ ⟳" no painel Exibição e o status dizendo o que foi selecionado e em que camadas.
 
 ---
 
