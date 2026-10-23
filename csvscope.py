@@ -254,8 +254,8 @@ class CsvScope:
 		}
 		# Rotulos dos eixos no dominio do tempo. Com 'auto' entre colchetes a
 		# notacao sai dos proprios dados -- "Time[auto s]", "Voltage[auto V]".
-		self.labelx='Time[ms]'
-		self.labely='Voltage[V]'
+		self.labelx ="Time[auto s]"
+		self.labely ="Voltage[auto V]"
 		# Unidade ja resolvida de cada rotulo 'auto'. A primeira serie decide e
 		# as demais herdam: series do mesmo grafico dividem o eixo, entao nao
 		# podem acabar em escalas diferentes.
