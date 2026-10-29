@@ -145,6 +145,54 @@ def channel_tags(bw=None, escala=None):
 	return tags
 
 
+def janela_fora(x, y, limite, abaixo=True):
+	"""Maior intervalo contiguo em que o sinal fica fora de um limite.
+
+	Args:
+		x, y (array): tempo e amplitude, ja na unidade do grafico.
+		limite (float): o limite, na mesma unidade de y.
+		abaixo (bool): True procura y < limite (undershoot), False y > limite.
+
+	Returns:
+		dict com 't_ini', 't_fim', 'dur', 'n' (quantas excursoes houve) e
+		'truncada' (a excursao encosta na borda da captura, entao a duracao e
+		um piso e nao o valor real). None quando o sinal nunca sai do limite.
+
+	Note:
+		Os cruzamentos sao interpolados entre amostras. Arredondar para a
+		amostra mais proxima daria erro visivel quando a janela da
+		especificacao e da ordem de poucas dezenas de pontos.
+	"""
+	x = np.asarray(x, dtype=float)
+	y = np.asarray(y, dtype=float)
+	fora = (y < limite) if abaixo else (y > limite)
+	if not fora.any(): return None
+
+	# Bordas dos trechos contiguos. O zero nas pontas faz o diff acusar
+	# tambem as excursoes que comecam ou terminam coladas na borda da
+	# captura, que senao ficariam sem um dos limites.
+	d = np.diff(np.r_[0, fora.astype(np.int8), 0])
+	ini = np.flatnonzero(d == 1)
+	fim = np.flatnonzero(d == -1) - 1
+
+	def cruza(i, j):
+		"""Instante em que o segmento i->j cruza o limite."""
+		dv = y[j] - y[i]
+		if dv == 0: return x[j]
+		f = np.clip((limite - y[i]) / dv, 0.0, 1.0)
+		return x[i] + f * (x[j] - x[i])
+
+	melhor = None
+	for i0, i1 in zip(ini, fim):
+		corta = i0 == 0 or i1 == y.size - 1
+		t0 = x[0]          if i0 == 0          else cruza(i0 - 1, i0)
+		t1 = x[y.size - 1] if i1 == y.size - 1 else cruza(i1 + 1, i1)
+		if melhor is None or (t1 - t0) > melhor['dur']:
+			melhor = {'t_ini': t0, 't_fim': t1, 'dur': t1 - t0, 'truncada': corta}
+	melhor['n'] = int(ini.size)
+	return melhor
+
+
 def fft_mask(pontos, nome='', cor='r', zona=None):
 	"""Monta uma mascara de espectro a partir dos vertices do grafico.
 
@@ -1064,6 +1112,70 @@ class CsvScope:
 				self.yDf['draw'][indexLabel].append([cord,text,style,dir,name])
 				return
 				
+			elif d in ('Undershoot', 'Overshoot'):
+				# Pico e TEMPO fora do limite de operacao. O datasheet costuma
+				# tolerar um transitorio profundo desde que curto (ex.: -2 V por
+				# ate 20 ns), entao o pico sozinho nao decide nada -- e por isso
+				# que esta nota depende do maxLimits ja declarado: e ele que diz
+				# onde o sinal saiu da faixa e a contagem comeca.
+				abaixo = d == 'Undershoot'
+				mx = self.Limits.get('maxLimits') or {}
+				oper = mx.get('low') if abaixo else mx.get('high')
+				if oper is None:
+					print(f'ERROR ANOTATION {name}: {d} precisa do limite de '
+						f'operacao em CS.Limits["maxLimits"]')
+					return
+				fy = s.get('engNoteY', 1) or 1
+				fx = s.get('engNoteX', 1) or 1
+				jan = janela_fora(x.to_numpy(), y.to_numpy(), oper / fy, abaixo)
+
+				i = y.idxmin() if abaixo else y.idxmax()
+				pico = y[i]
+				partes = [f'{d}: {format_value(pico, s, "y")}']
+				if jan is None:
+					partes.append('dentro do limite de operacao')
+				else:
+					dur = format_value(jan['dur'], s, 'x')
+					partes.append(f'por {">" if jan["truncada"] else ""}{dur}')
+					if jan['n'] > 1:
+						partes.append(f'({jan["n"]} excursoes, a maior)')
+
+				# Veredito contra o transitorio permitido, quando declarado
+				tr = self.Limits.get('transLimits') or {}
+				vlim = tr.get('low') if abaixo else tr.get('high')
+				jlim = tr.get('window_low') if abaixo else tr.get('window_high')
+				if vlim is not None or jlim is not None:
+					falhou = []
+					if vlim is not None and (
+							(pico * fy < vlim) if abaixo else (pico * fy > vlim)):
+						falhou.append('pico')
+					# Excursao truncada: a duracao medida e um piso, entao so
+					# reprova se ja passou da janela com o que deu para ver.
+					if jlim is not None and jan and jan['dur'] * fx > jlim:
+						falhou.append('janela')
+					esp = []
+					if vlim is not None: esp.append(format_eng_str(vlim, 2) + 'V')
+					if jlim is not None: esp.append(format_eng_str(jlim, 0) + 's')
+					# Segunda linha: junto o texto fica largo demais e vaza da
+					# figura quando o pico cai perto de uma das bordas.
+					partes.append('\n' + ('FORA [' + '+'.join(falhou) + ']' if falhou
+						else 'OK') + ' (lim ' + ' / '.join(esp) + ')')
+
+				text = '  '.join(partes).replace('  \n', '\n')
+				if jan is not None:
+					# Barra no nivel do limite mostrando de onde ate onde contou
+					self.yDf['draw'][indexLabel].append(
+						[[[jan['t_ini'], oper / fy], [jan['t_fim'], oper / fy]],
+						 '', '|-|', '', name, ':'])
+				cord = [[x[i], pico], [None, None]]
+				style = '->'
+				# Para o lado: o pico de um transitorio fica colado na borda
+				# da captura, e um texto centrado nele sairia da figura.
+				dir = 'SE' if abaixo else 'NE'
+				s['info'][d] = [pico, text]
+				self.yDf['draw'][indexLabel].append([cord, text, style, dir, name])
+				return
+
 			elif d == 'RMS':
 				rms = np.sqrt((y**2).mean())
 				meio = int(len(y)/2)
@@ -1406,6 +1518,20 @@ class CsvScope:
 				_rotula(hi, f'{hi_pct:+g}%', 'C0')
 			ax.axhline(esc(nom), linestyle=':', linewidth=0.8, color='gray')
 			_rotula(esc(nom), 'nom', 'gray')
+
+		# =============================
+		# Transitorio de chaveamento
+		# =============================
+		# Pico tolerado alem do limite de operacao durante a borda. Cor propria
+		# para nao se confundir com o vermelho do maximo absoluto: cruzar esta
+		# linha reprova, cruzar a de operacao so abre a contagem da janela.
+		if self.Limits.get('transLimits'):
+			tr = self.Limits['transLimits']
+			for chave, rot in (('high', 'overshoot'), ('low', 'undershoot')):
+				if tr.get(chave) is None: continue
+				ax.axhline(esc(tr[chave]), linestyle='-.', linewidth=0.9,
+					color='darkorange')
+				_rotula(esc(tr[chave]), rot, 'darkorange')
 
 		# Max limits (independent)
 		if 'maxLimits' in self.Limits:

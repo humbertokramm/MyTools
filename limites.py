@@ -7,14 +7,26 @@ limites = {
     },
     "74LVC595":{
         "all":{
-            'ViL': [-0.5 , 0.99],
-            'ViH': [2.31 , 3.8],
+            'ViL': [-0.5 , 0.8],
+            'ViH': [2 , 6.5],
+        }
+    },
+    "74HC595":{
+        "all":{
+            'ViL': [-0.5 , 0.9],
+            'ViH': [2.1 , 7],
         }
     },
     "74LV125":{
         "all":{
             'ViL': [-0.5 , 0.8],
             'ViH': [2.0 , 3.8],
+        }
+    },
+    "74LVC125":{
+        "all":{
+            'ViL': [-0.5 , 0.8],
+            'ViH': [2.0 , 6.5],
         }
     },
     "74LV165":{
@@ -27,6 +39,11 @@ limites = {
         "all":{
             'ViL': [-0.5 , 0.8],
             'ViH': [1.7 , 3.6],
+            # Transitorio de chaveamento, que o datasheet permite alem do
+            # limite de operacao. O undershoot leva uma janela junto: so o
+            # pico nao reprova, o que vale e quanto tempo ele fica la.
+            'overshoot':  4.2,
+            'undershoot': (-2.0, 20e-9),
         }
     },
     "SFP":{
@@ -284,6 +301,20 @@ def getLimit(side,vcc="3V3",type="input"):
             "upper": ViH[0],
         }
     }
+    # Transitorio: pico tolerado durante o chaveamento, separado do limite
+    # de operacao. O undershoot pode vir como (pico, janela_em_s).
+    trans = {}
+    if "overshoot" in entry:
+        o = entry["overshoot"]
+        o = o if isinstance(o, (tuple, list)) else (o, None)
+        trans["high"], trans["window_high"] = _resolve(o[0], v), o[1]
+    if "undershoot" in entry:
+        u = entry["undershoot"]
+        u = u if isinstance(u, (tuple, list)) else (u, None)
+        trans["low"], trans["window_low"] = _resolve(u[0], v), u[1]
+    if trans:
+        values["transLimits"] = trans
+
     if "maxLimits" in entry:
         values["maxLimits"]={
             "low":  _resolve(entry["maxLimits"][0], v),
