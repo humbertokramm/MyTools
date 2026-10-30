@@ -1133,7 +1133,7 @@ class CsvScope:
 				pico = y[i]
 				partes = [f'{d}: {format_value(pico, s, "y")}']
 				if jan is None:
-					partes.append('dentro do limite de operacao')
+					partes.append('')
 				else:
 					dur = format_value(jan['dur'], s, 'x')
 					partes.append(f'por {">" if jan["truncada"] else ""}{dur}')
@@ -1171,7 +1171,8 @@ class CsvScope:
 				style = '->'
 				# Para o lado: o pico de um transitorio fica colado na borda
 				# da captura, e um texto centrado nele sairia da figura.
-				dir = 'SE' if abaixo else 'NE'
+				#dir = 'SE' if abaixo else 'NE'
+				dir = 'W'
 				s['info'][d] = [pico, text]
 				self.yDf['draw'][indexLabel].append([cord, text, style, dir, name])
 				return
