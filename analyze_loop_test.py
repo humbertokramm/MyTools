@@ -46,7 +46,7 @@ FPGA_DATE_RE = re.compile(r'Mainboard FPGA Release Date:\s*(.+)')
 # Named test result lines from the Test Report section
 # e.g. "[OK]    Testing_ZL30733 : OK"  or  "[ERROR]    Testing_GNSS_Antenna : ERROR"
 NAMED_TEST_RE = re.compile(
-    r'\[(OK|ERROR)\]\s+(Testing[\w_()\s\-]+?)\s*:\s*(OK|ERROR)',
+    r'\[(OK|ERROR)\]\s+([A-Za-z][\w()%\s\-]*?)\s*:\s*(OK|ERROR)\s*$',
     re.IGNORECASE
 )
 
@@ -261,7 +261,10 @@ def parse_log(filepath):
     n_lua_loops = sum(1 for l in lines if '=== LOOP TEST ===' in l)
     n_logins    = sum(1 for l in lines
                       if re.search(r'\]\s*\w[\w\d._-]+\s+login:\s+root\b', l))
-    lua_loop_mode = (n_lua_loops > n_logins)
+    n_boots     = sum(1 for l in lines if re.search(r'Welcome to \w+_ft\b', l))
+    # Reboot tests also print === LOOP TEST === (counter resets each boot);
+    # only treat as lua-loop mode when the board is not rebooting.
+    lua_loop_mode = (n_lua_loops > n_logins) and n_boots < 2
 
     loops    = []
     cur      = None
@@ -275,7 +278,7 @@ def parse_log(filepath):
     in_report      = False
     device         = 'unknown'
 
-    ERR_RE        = re.compile(r'\[ERROR\]\s+([\w_()\s\-]+?)\s*:\s*ERROR')
+    ERR_RE        = re.compile(r'\[ERROR\]\s+([\w_()%\s\-]+?)\s*:\s*ERROR')
     LOGIN_RE      = re.compile(r'\]\s*([\w][\w\d._-]+)\s+login:\s+root\b')
     BOOT_START_RE = re.compile(r'Welcome to \w+_ft\b')
     # BCM143 start: "dsh -c \"test run 143\""
@@ -1201,6 +1204,11 @@ function copyDUT(btn) {{
 # ── Section builders ───────────────────────────────────────────────────────────
 
 def build_bug_section_html(loops):
+    # Bug cards only make sense on logs that carry their data (DM4780 platform)
+    gnss_names = BUG_TESTS['BG-2109']
+    if not any(l.get('bcm143_pass') is not None or l['dpll_refs'] or
+               any(t in l['test_results'] for t in gnss_names) for l in loops):
+        return ''
     cards = build_bug_cards(loops)
     parts = []
     for bug_id, title, details, st, verdict in cards:
