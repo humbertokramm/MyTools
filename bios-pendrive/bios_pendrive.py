@@ -30,26 +30,26 @@ VERSION = "1.0.0"
 EQUIP_IP_PADRAO = "192.168.0.25"
 
 # Telnet pelos servidores de terminal (ser2net): o telnet e a console serial
-# do equipamento, e a rede dele sobe sem IP. Cada porta tem um IP fixo na rede
-# do laboratorio.
-#   host: (primeira porta, IP da primeira porta, mascara, gateway)
+# do equipamento, e a rede dele sobe sem IP. O IP do equipamento e de quem
+# usa: cada um reserva o seu (na camara do Liem, em http://172.22.239.100/).
+# A tabela so traz o que e da rede do laboratorio.
+#   host: (mascara, gateway, pagina de reserva de IP ou None)
 REDES_TELNET = {
-    "172.22.239.100": (4001, "172.22.239.51", "255.255.0.0", "172.22.239.1"),   # camara Liem
-    "172.22.227.201": (4000, "172.22.227.51", "255.255.0.0", "172.22.227.254"), # sala 35
+    "172.22.239.100": ("255.255.0.0", "172.22.239.1", "http://172.22.239.100/"),  # camara Liem
+    "172.22.227.201": ("255.255.0.0", "172.22.227.254", None),                    # sala 35
 }
 
 
-def rede_telnet(host, port):
-    """(ip, mascara, gateway) do equipamento atras de *host*:*port*, ou None."""
-    try:
-        porta0, ip0, mask, gw = REDES_TELNET[host.strip()]
-        n = int(port) - porta0
-    except (KeyError, ValueError):
-        return None
-    if not 0 <= n < 8:
-        return None
-    pre, _, ult = ip0.rpartition(".")
-    return f"{pre}.{int(ult) + n}", mask, gw
+def rede_telnet(host):
+    """(mascara, gateway, pagina de reserva) da rede atras de *host*, ou None."""
+    return REDES_TELNET.get(host.strip())
+
+
+def aviso_reserva_ip(host):
+    """Texto pedindo um IP reservado para o equipamento atras de *host*."""
+    rede = rede_telnet(host)
+    onde = f" em {rede[2]}" if rede and rede[2] else ""
+    return f"Reserve um IP para o equipamento{onde} e informe-o em Rede do equipamento"
 
 # Ferramentas EFI gravadas junto com a BIOS. O compartilhamento e a
 # fonte: todo mundo grava o pendrive com a mesma versao, sem depender de quem
@@ -267,7 +267,7 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
     equip_ip: na conexao serial, IP a configurar na interface do equipamento
         antes do TFTP. None pula esse passo.
     rede_tel: no telnet, (ip, mascara, gateway) a configurar se a interface
-        do equipamento estiver sem IP. None usa :data:`REDES_TELNET`.
+        do equipamento estiver sem IP. O IP e o reservado por quem usa.
     """
     progress = progress or (lambda d, t: None)
     t = device.connect(kind, target, user, password, log)
@@ -302,16 +302,14 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
         # configurada por alguem (macro, usuario) e fica como esta.
         configurou = False
         if kind == "telnet" and not dev.iface_has_ip(equip_iface):
-            host, _, port = target.partition(":")
-            rede = rede_tel or rede_telnet(host, port or 23)
-            if rede:
-                ip, mask, gw = rede
+            if rede_tel and all(rede_tel):
+                ip, mask, gw = rede_tel
                 dev.setup_network(ip, iface=equip_iface, netmask=mask, gateway=gw)
                 configurou = True
             else:
-                log(f"AVISO: {equip_iface} do equipamento sem IP e {target} nao "
-                    f"esta na tabela de redes conhecidas. Informe IP, mascara "
-                    f"e gateway do equipamento, ou configure a rede antes.")
+                log(f"AVISO: {equip_iface} do equipamento sem IP. "
+                    f"{aviso_reserva_ip(target.partition(':')[0])} "
+                    f"(IP, mascara e gateway), ou configure a rede antes.")
 
         if configurou and tftp_ip:
             log(f"Aguardando a rede passar trafego ate {tftp_ip} (ate 60 s)...")
@@ -457,8 +455,8 @@ def run_gui():
     ttk.Combobox(fc, textvariable=baud, width=7, values=["9600", "38400", "57600", "115200"]).grid(row=2, column=4, sticky="w", **pad)
 
     # Rede do equipamento no telnet: usada so se a eth dele estiver sem IP.
-    # Preenchida pela tabela REDES_TELNET a cada troca de host/porta; dá para
-    # editar quando o servidor de terminal nao esta na tabela.
+    # O IP e o que o usuario reservou; mascara e gateway vem da tabela
+    # REDES_TELNET a cada troca de host, e dá para editar fora dela.
     fr = ttk.Frame(fc)
     fr.grid(row=3, column=0, columnspan=7, sticky="w")
     ttk.Label(fr, text="Rede do equipamento (telnet, se estiver sem IP):").grid(row=0, column=0, **pad)
@@ -467,14 +465,19 @@ def run_gui():
         ttk.Label(fr, text=rot).grid(row=0, column=1 + 2 * i, sticky="e")
         ttk.Entry(fr, textvariable=var, width=w).grid(row=0, column=2 + 2 * i, sticky="w", **pad)
 
+    reserva_lbl = ttk.Label(fr, foreground="gray")
+    reserva_lbl.grid(row=1, column=0, columnspan=7, sticky="w", padx=6)
+
     def preenche_rede_tel(*_):
-        rede = rede_telnet(tel_host.get(), tel_port.get())
+        rede = rede_telnet(tel_host.get())
         if rede:
-            for var, val in zip((tel_eq_ip, tel_eq_mask, tel_eq_gw), rede):
-                var.set(val)
+            tel_eq_mask.set(rede[0])
+            tel_eq_gw.set(rede[1])
+        reserva_lbl.config(text="IP: o seu, reservado"
+                           + (f" em {rede[2]}" if rede and rede[2] else "")
+                           + " (não use o de outra pessoa)")
 
     tel_host.trace_add("write", preenche_rede_tel)
-    tel_port.trace_add("write", preenche_rede_tel)
     preenche_rede_tel()
 
     ttk.Label(fc, text="Usuário").grid(row=0, column=5, sticky="e")
@@ -762,11 +765,12 @@ def run_cli(argv):
     p.add_argument("--equip-ip",
                    help=f"IP a subir na eth do equipamento antes do TFTP. Serial: "
                         f"padrão {EQUIP_IP_PADRAO}, 'none' pula esse passo. Telnet: "
-                        f"só se a eth estiver sem IP; padrão pela tabela do servidor "
-                        f"de terminal (porta 4005 da câmara = 172.22.239.55)")
+                        f"só se a eth estiver sem IP; use o IP que você reservou "
+                        f"(câmara: http://172.22.239.100/)")
     p.add_argument("--equip-mask", help="no telnet, máscara do equipamento (padrão pela "
-                                        "tabela, senão 255.255.0.0)")
-    p.add_argument("--equip-gw", help="no telnet, gateway do equipamento (padrão pela tabela)")
+                                        "rede do servidor, senão 255.255.0.0)")
+    p.add_argument("--equip-gw", help="no telnet, gateway do equipamento (padrão pela "
+                                      "rede do servidor)")
     p.add_argument("--equip-iface", default="eth0",
                    help="interface do equipamento a subir (padrão: eth0)")
     p.add_argument("--dir", default=DEFAULT_DIR, help="pasta local dos arquivos")
@@ -802,14 +806,15 @@ def run_cli(argv):
         eq_ip = None if eq_ip.lower() == "none" else eq_ip
         rede = None
         if kind == "telnet" and (a.equip_ip or a.equip_mask or a.equip_gw):
-            # Completa o que nao foi informado com a tabela, se houver.
-            h, _, pt = target.partition(":")
-            base = rede_telnet(h, pt or 23) or (None, "255.255.0.0", None)
-            rede = (eq_ip if a.equip_ip else base[0], a.equip_mask or base[1],
-                    a.equip_gw or base[2])
-            if not all(rede):
-                log("ERRO: no telnet informe --equip-ip e --equip-gw "
-                    "(host:porta fora da tabela).")
+            # Mascara e gateway vem da rede do servidor, se conhecida.
+            base = rede_telnet(target.partition(":")[0]) or ("255.255.0.0", None, None)
+            rede = (eq_ip if a.equip_ip else None, a.equip_mask or base[0],
+                    a.equip_gw or base[1])
+            if not rede[0]:
+                log("ERRO: no telnet informe --equip-ip com o IP que voce reservou.")
+                return 2
+            if not rede[2]:
+                log("ERRO: no telnet informe --equip-gw (servidor fora da tabela).")
                 return 2
         r = run_job(a.job, kind, target, a.user, a.password, ip, a.dir, disk=a.disk,
                     layout=a.layout, blksize=a.blksize, log=log, progress=prog, confirm=confirm,
