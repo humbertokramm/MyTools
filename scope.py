@@ -35,6 +35,7 @@ class Scope:
     def __init__(self, resource=None, debug=False, overwrite=False):
         self.overwrite = overwrite
         self.inst = None
+        self.idn = None
         self.rm = None
         # True quando o usuario optou por seguir sem o instrumento.
         self.offline = False
@@ -105,6 +106,7 @@ class Scope:
 
         idn = self.inst.query("*IDN?")
         print("Instrument detected:", idn)
+        self.idn = idn.strip()
 
         # -------------------------------------------------
         # select driver
@@ -161,7 +163,14 @@ class Scope:
         filename += ".csv"
         if self._file_exists(filename):
             return
-        try: 
+        # Ler a forma de onda com o aparelho em RUN trava (no Keysight o
+        # :WAV:MODE RAW exige aquisicao parada). Depois de um single concluido
+        # o STOP nao muda nada; com um single armado e sem trigger, ele aborta
+        # e a captura sai com a aquisicao anterior -- use wait_single() antes.
+        # Parar aqui tambem garante que o print da tela (capture_screen, logo
+        # depois no main) mostre a mesma aquisicao gravada no CSV.
+        self.driver.stop()
+        try:
             time, voltage, metadata = self.driver.capture_waveform(channel)
         except RuntimeError as e:
             dh.print_colored(e,'RED')
@@ -365,6 +374,95 @@ class Scope:
             self.rm.close()
         if hasattr(self, 'driver') and hasattr(self.driver, 'close'):
             self.driver.close()
+
+    # ---------------------------------------------------------
+    # setup completo do aparelho
+    # ---------------------------------------------------------
+    def save_setup(self, filename):
+        """Salva a configuracao completa do osciloscopio em arquivo.
+
+        O arquivo comeca com uma linha '# IDN: ...' e segue com o setup
+        exatamente como o aparelho o exporta (binario no Keysight, texto no
+        Tektronix), para ser reaplicado com :meth:`load_setup`.
+
+        Args:
+            filename (str): caminho; ``.setup`` e acrescentado se faltar.
+
+        Returns:
+            str | None: caminho gravado, ou ``None`` se nao gravou.
+        """
+        if not filename.endswith('.setup'):
+            filename += '.setup'
+        if self._file_exists(filename):
+            return None
+        try:
+            data = self.driver.save_setup()
+        except AttributeError:
+            dh.print_colored("Salvar setup nao suportado neste instrumento.", 'YELLOW')
+            return None
+
+        with open(filename, 'wb') as f:
+            f.write(f"# IDN: {self.idn or ''}\n".encode())
+            f.write(data)
+        print(f"Setup saved: {filename} ({len(data)} bytes)")
+        return filename
+
+    def load_setup(self, filename):
+        """Reaplica um setup gravado por :meth:`save_setup`.
+
+        O setup so vale para o mesmo modelo: se o arquivo veio de outro
+        aparelho, avisa e nao envia nada. Numero de serie e firmware
+        diferentes so geram aviso, porque o setup costuma ser aceito.
+
+        Aceita tambem o setup cru, sem a linha '# IDN:' (como sai de um
+        script avulso); nesse caso nao ha o que conferir.
+
+        Returns:
+            bool: ``True`` se o setup foi enviado.
+        """
+        if not filename.endswith('.setup'):
+            filename += '.setup'
+        with open(filename, 'rb') as f:
+            data = f.read()
+
+        origem = ''
+        if data.startswith(b'# IDN:'):
+            cabecalho, _, data = data.partition(b'\n')
+            origem = cabecalho.decode(errors='replace').removeprefix('# IDN:').strip()
+
+        if origem and self.idn:
+            o, a = origem.split(','), self.idn.split(',')
+            if o[:2] != a[:2]:
+                dh.print_colored(
+                    f"Setup de outro modelo: {origem}\n"
+                    f"  aparelho conectado: {self.idn}\nNada enviado.", 'RED')
+                return False
+            if o != a:
+                dh.print_colored(f"Setup de outra unidade/firmware: {origem}", 'YELLOW')
+
+        try:
+            self.driver.load_setup(data)
+        except AttributeError:
+            dh.print_colored("Carregar setup nao suportado neste instrumento.", 'YELLOW')
+            return False
+        print(f"Setup loaded: {filename}")
+        return True
+
+    def ensure_setup(self, filename):
+        """Carrega o setup se o arquivo existir; se nao, grava o atual.
+
+        Na primeira rodada de um ensaio o osciloscopio e ajustado na mao e a
+        configuracao fica gravada; nas seguintes ela e reaplicada, para que
+        todas as capturas saiam com a mesma configuracao.
+
+        Returns:
+            str | None: ``'loaded'``, ``'saved'`` ou ``None`` se nada foi feito.
+        """
+        if not filename.endswith('.setup'):
+            filename += '.setup'
+        if os.path.exists(filename):
+            return 'loaded' if self.load_setup(filename) else None
+        return 'saved' if self.save_setup(filename) else None
 
     def __enter__(self):
         return self

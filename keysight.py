@@ -409,6 +409,23 @@ class KeysightScope:
         self._write(':STOP')
 
     # ---------------------------------------------------------
+    # SETUP (configuracao completa)
+    # ---------------------------------------------------------
+    def save_setup(self):
+        """Configuracao completa do aparelho, como ele mesmo a exporta.
+
+        O :SYSTem:SETup? devolve um bloco binario IEEE 488.2 que, no
+        InfiniiVision, e um XML de ~80 kB com produto e versao de firmware.
+        """
+        return self.inst.query_binary_values(
+            ':SYSTem:SETup?', datatype='B', container=bytes)
+
+    def load_setup(self, data):
+        """Reaplica um setup obtido com :meth:`save_setup`."""
+        self.inst.write_binary_values(':SYSTem:SETup ', data, datatype='B')
+        self._query('*OPC?')
+
+    # ---------------------------------------------------------
     def _query(self, txt, retries=1):
         """Query com recuperacao de timeout.
 

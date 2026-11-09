@@ -424,6 +424,90 @@ class TektronixScope:
         self._write('ACQuire:STATE STOP')
 
     # ---------------------------------------------------------
+    # SETUP (configuracao completa)
+    # ---------------------------------------------------------
+    def save_setup(self):
+        """Configuracao completa, como a sequencia de comandos do *LRN?.
+
+        So da para reenviar a resposta se ela vier com os cabecalhos por
+        extenso, entao HEADer e VERBose sao ligados durante a leitura e
+        voltam ao estado anterior depois.
+
+        O *LRN? vem numa linha so; grava-se uma linha por comando absoluto
+        para o arquivo ser legivel (e comparavel com diff). Os comandos
+        relativos que vem em seguida ficam na mesma linha, porque dependem
+        dele: em ':ACQUIRE:STOPAFTER SEQUENCE;STATE 0' o 'STATE 0' e
+        ':ACQUIRE:STATE 0'. Assim comentar uma linha nunca muda o sentido
+        da seguinte. O :meth:`load_setup` junta tudo de volta.
+        """
+        header, verbose = self._header_verbose()
+        self.inst.write('HEADer ON;VERBose ON')
+        try:
+            txt = self.inst.query('*LRN?')
+        finally:
+            self.inst.write(f'HEADer {header};VERBose {verbose}')
+        linhas = []
+        for cmd in self._separa_comandos(txt.strip(), ';'):
+            if linhas and not cmd.startswith((':', '*')):
+                linhas[-1] += ';' + cmd
+            else:
+                linhas.append(cmd)
+        return '\n'.join(linhas).encode()
+
+    def load_setup(self, data):
+        """Reaplica um setup obtido com :meth:`save_setup`.
+
+        O setup gravado traz ':HEADER 1', porque o cabecalho estava ligado
+        na leitura. Sem restaurar o estado anterior, as respostas passariam
+        a vir com cabecalho e todo float(query(...)) deste driver quebraria
+        na captura seguinte.
+
+        Aceita um comando por linha (formato atual) ou tudo numa linha so
+        (arquivos antigos). Linhas vazias e comecando com '#' sao ignoradas,
+        entao da para comentar ou desativar um comando no arquivo.
+        """
+        linhas = self._separa_comandos(data.decode(), '\r\n')
+        comandos = ';'.join(l for l in linhas if not l.startswith('#'))
+        header, verbose = self._header_verbose()
+        try:
+            self.inst.write(comandos)
+            self.inst.query('*OPC?')
+        finally:
+            self.inst.write(f'HEADer {header};VERBose {verbose}')
+
+    def _header_verbose(self):
+        """Estado atual de HEADer e VERBose ('0' ou '1').
+
+        Com o cabecalho ligado a resposta traz o proprio nome (':HEADER 1'),
+        dai o split.
+        """
+        return (self.inst.query('HEADer?').split()[-1],
+                self.inst.query('VERBose?').split()[-1])
+
+    @staticmethod
+    def _separa_comandos(txt, separadores):
+        """Quebra *txt* em qualquer caractere de *separadores* fora de aspas.
+
+        Rotulos e textos de tela (ex. ':CH1:LABEL "3V3;IN"') podem conter
+        ';', e cortar ali corromperia o comando. Devolve os pedacos sem
+        espacos nas pontas e sem os vazios.
+        """
+        pedacos, atual, aspa = [], [], None
+        for c in txt:
+            if aspa:
+                if c == aspa:
+                    aspa = None
+            elif c in '"\'':
+                aspa = c
+            elif c in separadores:
+                pedacos.append(''.join(atual))
+                atual = []
+                continue
+            atual.append(c)
+        pedacos.append(''.join(atual))
+        return [p.strip() for p in pedacos if p.strip()]
+
+    # ---------------------------------------------------------
     def _write(self, txt):
         if self.debug:
             self.inst.write('*CLS')
