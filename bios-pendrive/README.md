@@ -11,6 +11,12 @@ própria aplicação abre no PC.
 2. Escolha como falar com o equipamento: **SSH** (IP do equipamento), **Telnet**
    (servidor serial remoto, ex. `172.22.239.100:4006`) ou **Serial local** (COM).
    Usuário/senha padrão `root/root`. O console tem que estar no shell Linux (`#`).
+   No Telnet, se a `eth0` do equipamento estiver sem IP (logo após o boot), a
+   ferramenta configura IP, máscara e gateway da linha **Rede do equipamento**
+   e espera a rede passar tráfego. Esses campos são preenchidos pela porta,
+   com a mesma tabela da macro `updateLua.ttl` (câmara `172.22.239.100:4005` →
+   `172.22.239.55/16`, gateway `172.22.239.1`); para outro servidor de
+   terminal, preencha à mão. Se a `eth0` já tiver IP, nada é alterado.
 3. Escolha o **IP deste PC** que o equipamento consegue alcançar.
 4. **Testar conexão**: mostra hostname, pendrives detectados e se o equipamento
    pinga o IP do PC.
@@ -76,7 +82,8 @@ BiosPendrive.exe write  --serial COM3:115200 --tftp-ip 10.0.120.23 --dir C:\bios
 ```
 
 Opções: `--disk /dev/sdX` (se houver mais de um pendrive), `--layout floppy`
-(FAT32 sem tabela de partição), `--blksize N` (padrão 1468).
+(FAT32 sem tabela de partição), `--blksize N` (padrão 1468). No telnet,
+`--equip-ip`, `--equip-mask` e `--equip-gw` substituem a rede da tabela.
 
 ## O que roda no equipamento
 

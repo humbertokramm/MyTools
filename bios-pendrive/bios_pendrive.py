@@ -29,6 +29,28 @@ VERSION = "1.0.0"
 # serial. Mesmo valor usado nas macros do TeraTerm e no http_server.
 EQUIP_IP_PADRAO = "192.168.0.25"
 
+# Telnet pelos servidores de terminal (ser2net): o telnet e a console serial
+# do equipamento, e a rede dele sobe sem IP. Cada porta tem um IP fixo na rede
+# do laboratorio -- mesma tabela da macro updateLua.ttl.
+#   host: (primeira porta, IP da primeira porta, mascara, gateway)
+REDES_TELNET = {
+    "172.22.239.100": (4001, "172.22.239.51", "255.255.0.0", "172.22.239.1"),   # camara Liem
+    "172.22.227.201": (4000, "172.22.227.51", "255.255.0.0", "172.22.227.254"), # sala 35
+}
+
+
+def rede_telnet(host, port):
+    """(ip, mascara, gateway) do equipamento atras de *host*:*port*, ou None."""
+    try:
+        porta0, ip0, mask, gw = REDES_TELNET[host.strip()]
+        n = int(port) - porta0
+    except (KeyError, ValueError):
+        return None
+    if not 0 <= n < 8:
+        return None
+    pre, _, ult = ip0.rpartition(".")
+    return f"{pre}.{int(ult) + n}", mask, gw
+
 # Ferramentas EFI mantidas pela Engenharia de Teste. O compartilhamento e a
 # fonte: todo mundo grava o pendrive com a mesma versao, sem depender de quem
 # copiou o que para a pasta local. Fora da rede a copia local serve.
@@ -239,11 +261,13 @@ def file_logger(log):
 # =========================================================================
 def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layout="mbr",
             blksize=1468, log=print, progress=None, confirm=None,
-            equip_ip=EQUIP_IP_PADRAO, equip_iface="eth0"):
+            equip_ip=EQUIP_IP_PADRAO, equip_iface="eth0", rede_tel=None):
     """job: 'info', 'backup' ou 'write'. confirm(texto) -> bool antes de formatar.
 
     equip_ip: na conexao serial, IP a configurar na interface do equipamento
         antes do TFTP. None pula esse passo.
+    rede_tel: no telnet, (ip, mascara, gateway) a configurar se a interface
+        do equipamento estiver sem IP. None usa :data:`REDES_TELNET`.
     """
     progress = progress or (lambda d, t: None)
     t = device.connect(kind, target, user, password, log)
@@ -272,6 +296,27 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
                 log(f"AVISO: nenhuma placa do PC subiu na faixa de {equip_ip} "
                     f"em 25 s. Confira o cabo na segunda placa de rede e se "
                     f"ela esta configurada nessa sub-rede.")
+
+        # Telnet via servidor de terminal: e a console serial, e a rede do
+        # equipamento pode estar sem IP (logo apos boot). Se ja tem IP, foi
+        # configurada por alguem (macro, usuario) e fica como esta.
+        configurou = False
+        if kind == "telnet" and not dev.iface_has_ip(equip_iface):
+            host, _, port = target.partition(":")
+            rede = rede_tel or rede_telnet(host, port or 23)
+            if rede:
+                ip, mask, gw = rede
+                dev.setup_network(ip, iface=equip_iface, netmask=mask, gateway=gw)
+                configurou = True
+            else:
+                log(f"AVISO: {equip_iface} do equipamento sem IP e {target} nao "
+                    f"esta na tabela de redes conhecidas. Informe IP, mascara "
+                    f"e gateway do equipamento, ou configure a rede antes.")
+
+        if configurou and tftp_ip:
+            log(f"Aguardando a rede passar trafego ate {tftp_ip} (ate 60 s)...")
+            if not dev.wait_ping(tftp_ip, 60):
+                log("AVISO: sem resposta em 60 s.")
 
         disks = dev.usb_disks()
         if not disks:
@@ -371,6 +416,9 @@ def run_gui():
     ssh_port = tk.StringVar(value=cfg.get("ssh_port", "22"))
     tel_host = tk.StringVar(value=cfg.get("tel_host", "172.22.239.100"))
     tel_port = tk.StringVar(value=cfg.get("tel_port", "4006"))
+    tel_eq_ip = tk.StringVar(value=cfg.get("tel_eq_ip", ""))
+    tel_eq_mask = tk.StringVar(value=cfg.get("tel_eq_mask", "255.255.0.0"))
+    tel_eq_gw = tk.StringVar(value=cfg.get("tel_eq_gw", ""))
     com_port = tk.StringVar(value=cfg.get("com_port", ""))
     baud = tk.StringVar(value=cfg.get("baud", "115200"))
     user = tk.StringVar(value=cfg.get("user", "root"))
@@ -407,6 +455,27 @@ def run_gui():
     com_cb.grid(row=2, column=2, sticky="w", **pad)
     ttk.Label(fc, text="Baud").grid(row=2, column=3, sticky="e")
     ttk.Combobox(fc, textvariable=baud, width=7, values=["9600", "38400", "57600", "115200"]).grid(row=2, column=4, sticky="w", **pad)
+
+    # Rede do equipamento no telnet: usada so se a eth dele estiver sem IP.
+    # Preenchida pela tabela REDES_TELNET a cada troca de host/porta; dá para
+    # editar quando o servidor de terminal nao esta na tabela.
+    fr = ttk.Frame(fc)
+    fr.grid(row=3, column=0, columnspan=7, sticky="w")
+    ttk.Label(fr, text="Rede do equipamento (telnet, se estiver sem IP):").grid(row=0, column=0, **pad)
+    for i, (rot, var, w) in enumerate((("IP", tel_eq_ip, 15), ("Máscara", tel_eq_mask, 13),
+                                       ("Gateway", tel_eq_gw, 15))):
+        ttk.Label(fr, text=rot).grid(row=0, column=1 + 2 * i, sticky="e")
+        ttk.Entry(fr, textvariable=var, width=w).grid(row=0, column=2 + 2 * i, sticky="w", **pad)
+
+    def preenche_rede_tel(*_):
+        rede = rede_telnet(tel_host.get(), tel_port.get())
+        if rede:
+            for var, val in zip((tel_eq_ip, tel_eq_mask, tel_eq_gw), rede):
+                var.set(val)
+
+    tel_host.trace_add("write", preenche_rede_tel)
+    tel_port.trace_add("write", preenche_rede_tel)
+    preenche_rede_tel()
 
     ttk.Label(fc, text="Usuário").grid(row=0, column=5, sticky="e")
     ttk.Entry(fc, textvariable=user, width=10).grid(row=0, column=6, sticky="w", **pad)
@@ -527,6 +596,8 @@ def run_gui():
         cfg.update(kind=kind.get(), ssh_host=ssh_host.get(), ssh_port=ssh_port.get(),
                    tel_host=tel_host.get(), tel_port=tel_port.get(), com_port=com_port.get(),
                    baud=baud.get(), user=user.get(), folder=folder.get(), layout=layout.get(),
+                   tel_eq_ip=tel_eq_ip.get(), tel_eq_mask=tel_eq_mask.get(),
+                   tel_eq_gw=tel_eq_gw.get(),
                    tftp_ip=ip_map.get(tftp_ip.get(), ""))
         save_config(cfg)
 
@@ -542,6 +613,8 @@ def run_gui():
         ip = ip_map.get(tftp_ip.get())
         lay = "floppy" if layout.get().startswith("FAT32 sem") else "mbr"
         dsk = disk_map.get(disk.get())
+        rede = tuple(v.get().strip() for v in (tel_eq_ip, tel_eq_mask, tel_eq_gw))
+        rede = rede if all(rede) else None
         busy["on"] = True
         for b in buttons:
             b.state(["disabled"])
@@ -558,7 +631,8 @@ def run_gui():
             try:
                 logf(f"===== {job.upper()} via {k} {target} | TFTP {ip} | {folder.get()}")
                 r = run_job(job, k, target, user.get(), password.get(), ip, folder.get(),
-                            disk=dsk, layout=lay, log=logf, progress=prog, confirm=ui_confirm)
+                            disk=dsk, layout=lay, log=logf, progress=prog, confirm=ui_confirm,
+                            rede_tel=rede)
                 if job == "info":
                     q.put(("disks", r))
                     q.put(("done", "Conexão OK."))
@@ -685,9 +759,14 @@ def run_cli(argv):
     p.add_argument("--user", default="root")
     p.add_argument("--password", default="root")
     p.add_argument("--tftp-ip", help="IP deste PC que o equipamento usa (padrão: rota até o host)")
-    p.add_argument("--equip-ip", default=EQUIP_IP_PADRAO,
-                   help=f"na serial, IP a subir na eth do equipamento antes do TFTP "
-                        f"(padrão: {EQUIP_IP_PADRAO}); 'none' pula esse passo")
+    p.add_argument("--equip-ip",
+                   help=f"IP a subir na eth do equipamento antes do TFTP. Serial: "
+                        f"padrão {EQUIP_IP_PADRAO}, 'none' pula esse passo. Telnet: "
+                        f"só se a eth estiver sem IP; padrão pela tabela do servidor "
+                        f"de terminal (porta 4005 da câmara = 172.22.239.55)")
+    p.add_argument("--equip-mask", help="no telnet, máscara do equipamento (padrão pela "
+                                        "tabela, senão 255.255.0.0)")
+    p.add_argument("--equip-gw", help="no telnet, gateway do equipamento (padrão pela tabela)")
     p.add_argument("--equip-iface", default="eth0",
                    help="interface do equipamento a subir (padrão: eth0)")
     p.add_argument("--dir", default=DEFAULT_DIR, help="pasta local dos arquivos")
@@ -719,10 +798,22 @@ def run_cli(argv):
         return input("Digite SIM para continuar: ").strip().upper() == "SIM"
 
     try:
-        eq_ip = None if str(a.equip_ip).lower() in ("none", "") else a.equip_ip
+        eq_ip = a.equip_ip or EQUIP_IP_PADRAO
+        eq_ip = None if eq_ip.lower() == "none" else eq_ip
+        rede = None
+        if kind == "telnet" and (a.equip_ip or a.equip_mask or a.equip_gw):
+            # Completa o que nao foi informado com a tabela, se houver.
+            h, _, pt = target.partition(":")
+            base = rede_telnet(h, pt or 23) or (None, "255.255.0.0", None)
+            rede = (eq_ip if a.equip_ip else base[0], a.equip_mask or base[1],
+                    a.equip_gw or base[2])
+            if not all(rede):
+                log("ERRO: no telnet informe --equip-ip e --equip-gw "
+                    "(host:porta fora da tabela).")
+                return 2
         r = run_job(a.job, kind, target, a.user, a.password, ip, a.dir, disk=a.disk,
                     layout=a.layout, blksize=a.blksize, log=log, progress=prog, confirm=confirm,
-                    equip_ip=eq_ip, equip_iface=a.equip_iface)
+                    equip_ip=eq_ip, equip_iface=a.equip_iface, rede_tel=rede)
         return 0 if r is not None else 1
     except (device.DeviceError, TftpError, OSError) as e:
         log(f"ERRO: {e}")

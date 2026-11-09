@@ -331,7 +331,7 @@ class Device:
             missing.append("busybox tftp")
         return missing
 
-    def setup_network(self, ip, iface="eth0", netmask="255.255.255.0"):
+    def setup_network(self, ip, iface="eth0", netmask="255.255.255.0", gateway=None):
         """Sobe a interface de rede do equipamento.
 
         Necessario na conexao serial: enquanto a interface do equipamento
@@ -340,12 +340,18 @@ class Device:
         na lista de IPs locais, entao nao ha como escolher o IP do TFTP.
         Subir a interface aqui e o que torna a rede do PC utilizavel.
 
-        Em telnet/SSH isso nao se aplica: a rede ja esta de pe, senao a
-        propria conexao nao existiria.
+        Tambem no telnet via servidor de terminal (ser2net do PC da camara):
+        ali o telnet e a console serial, nao a rede do equipamento, que sobe
+        sem IP. Nesse caso o PC fica em outra rede e o *gateway* e quem
+        leva o TFTP ate ele.
         """
-        self.log(f"Subindo {iface} do equipamento em {ip}...")
+        self.log(f"Subindo {iface} do equipamento em {ip}/{netmask}"
+                 + (f", gateway {gateway}" if gateway else "") + "...")
         self.sh(f"ifconfig {shlex.quote(iface)} {shlex.quote(ip)} "
                 f"netmask {shlex.quote(netmask)} up", check=False)
+        if gateway:
+            # 'File exists' quando a rota ja existe: nao e erro.
+            self.sh(f"route add default gw {shlex.quote(gateway)}", check=False)
         out = self.sh(f"ip -4 -o addr show dev {shlex.quote(iface)}", check=False)
         if ip in out:
             self.log(f"{iface} com {ip}")
@@ -353,8 +359,28 @@ class Device:
         self.log(f"AVISO: {iface} nao assumiu {ip}. Saida: {out.strip() or '(vazia)'}")
         return False
 
+    def iface_has_ip(self, iface="eth0"):
+        out = self.sh(f"ip -4 -o addr show dev {shlex.quote(iface)} scope global",
+                      check=False)
+        return "inet " in out
+
     def ping(self, ip):
         return self.t.run(f"ping -c 1 -W 2 {shlex.quote(ip)} >/dev/null 2>&1", 10)[0] == 0
+
+    def wait_ping(self, ip, timeout=60):
+        """Pinga *ip* ate responder ou *timeout* (s).
+
+        Logo depois de subir a interface o link ainda negocia; apos um boot
+        o primeiro pacote leva dezenas de segundos, e um TFTP nesse
+        intervalo da timeout. Mesma espera que a macro updateLua.ttl faz.
+        """
+        fim = time.monotonic() + timeout
+        while True:
+            if self.ping(ip):
+                return True
+            if time.monotonic() >= fim:
+                return False
+            time.sleep(1)    # sem rota o ping falha na hora
 
     def usb_disks(self):
         """[{dev, size, model, id}] dos discos USB (nunca a eMMC interna)."""
