@@ -372,7 +372,7 @@ class Device:
 
         Logo depois de subir a interface o link ainda negocia; apos um boot
         o primeiro pacote leva dezenas de segundos, e um TFTP nesse
-        intervalo da timeout. Mesma espera que a macro updateLua.ttl faz.
+        intervalo da timeout.
         """
         fim = time.monotonic() + timeout
         while True:

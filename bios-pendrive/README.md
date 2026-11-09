@@ -14,7 +14,7 @@ própria aplicação abre no PC.
    No Telnet, se a `eth0` do equipamento estiver sem IP (logo após o boot), a
    ferramenta configura IP, máscara e gateway da linha **Rede do equipamento**
    e espera a rede passar tráfego. Esses campos são preenchidos pela porta,
-   com a mesma tabela da macro `updateLua.ttl` (câmara `172.22.239.100:4005` →
+   com o IP fixo de cada porta (câmara `172.22.239.100:4005` →
    `172.22.239.55/16`, gateway `172.22.239.1`); para outro servidor de
    terminal, preencha à mão. Se a `eth0` já tiver IP, nada é alterado.
 3. Escolha o **IP deste PC** que o equipamento consegue alcançar.
@@ -31,8 +31,8 @@ nela à mão antes de gravar (outra BIOS, por exemplo). O log de tudo fica em
 `bios_pendrive.log` ao lado do `.exe`.
 
 Na hora de gravar, o `AfuEfix64.efi` e o `watchdog_off.nsh` são trazidos do
-compartilhamento da Engenharia de Teste, para o pendrive sair sempre com a
-versão que vale para todo mundo:
+compartilhamento, para o pendrive sair sempre com a mesma versão, sem depender
+do que cada um copiou para a pasta local:
 
 ```
 \\servidor.datacom.net.br\dm_projetos\Eng_Teste\TF\Utilitários\AfuEfix64

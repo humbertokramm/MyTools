@@ -26,12 +26,12 @@ APP_NAME = "BIOS Pendrive"
 VERSION = "1.0.0"
 
 # IP configurado na interface do equipamento na ligacao ponto a ponto por
-# serial. Mesmo valor usado nas macros do TeraTerm e no http_server.
+# serial. Mesmo valor usado no http_server.
 EQUIP_IP_PADRAO = "192.168.0.25"
 
 # Telnet pelos servidores de terminal (ser2net): o telnet e a console serial
 # do equipamento, e a rede dele sobe sem IP. Cada porta tem um IP fixo na rede
-# do laboratorio -- mesma tabela da macro updateLua.ttl.
+# do laboratorio.
 #   host: (primeira porta, IP da primeira porta, mascara, gateway)
 REDES_TELNET = {
     "172.22.239.100": (4001, "172.22.239.51", "255.255.0.0", "172.22.239.1"),   # camara Liem
@@ -51,7 +51,7 @@ def rede_telnet(host, port):
     pre, _, ult = ip0.rpartition(".")
     return f"{pre}.{int(ult) + n}", mask, gw
 
-# Ferramentas EFI mantidas pela Engenharia de Teste. O compartilhamento e a
+# Ferramentas EFI gravadas junto com a BIOS. O compartilhamento e a
 # fonte: todo mundo grava o pendrive com a mesma versao, sem depender de quem
 # copiou o que para a pasta local. Fora da rede a copia local serve.
 SHARE_TOOLS_DIR = r"\\servidor.datacom.net.br\dm_projetos\Eng_Teste\TF\Utilitários\AfuEfix64"
@@ -370,7 +370,7 @@ def run_job(job, kind, target, user, password, tftp_ip, folder, disk=None, layou
         os.makedirs(folder, exist_ok=True)
         if job == "write":
             # Antes de contar os arquivos, para o pendrive sair com a
-            # versao que a Engenharia de Teste publica.
+            # versao do compartilhamento.
             sync_share_tools(folder, log=log)
         with TftpServer(folder, tftp_ip, log=log, allow_write=(job == "backup")) as srv:
             try:
