@@ -19,3 +19,4 @@ dist/
 HTTP/version_info.txt
 HTTP/http_server_config.json
 emissao/emissao_gui.json
+HTTP/auto_install.ttl
