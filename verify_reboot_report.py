@@ -7,12 +7,17 @@ A boot passes when ft_card_init answers 55 and every Test Report item is OK.
 A boot that reboots without printing the Test Report counts as a failure;
 the last boot of a live log is shown as "em andamento".
 
+Each boot also gets the chamber PV/SP (controller reading) at that moment, read
+from the chamber monitor history (http://172.22.239.100/camara, 1 sample/min,
+kept 31 days). Without that history the report is built as before.
+
 Generates a Yodiz-compatible HTML fragment (inline styles, no
 DOCTYPE/head/body/scripts) in the current directory.
 
 Usage:
-    python verify_reboot_report.py <teraterm.log> [--title "..."] [--ref "Temp 1"]
-    --ref : sensor used for the temperature-band table (default: Temp 1)
+    python verify_reboot_report.py <teraterm.log> [--title "..."] [--ref "Temp 1"] [--sem-camara]
+    --ref        : sensor used for the temperature-band table (default: Temp 1)
+    --sem-camara : do not query the chamber history
 """
 
 import os
@@ -22,9 +27,13 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
+import camara_hist
+
 LOG_DIR   = Path(r'C:\Users\humberto.kramm\AppData\Local\teraterm5')
 GRID_COLS = 25
 BAND_C    = 10      # temperature band width (°C)
+
+CAMARA    = 'Câmara PV'     # key used in each boot's temps
 
 TS_RE      = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]')
 BOOT_RE    = re.compile(r'Welcome to (pd\w+)!')
@@ -134,6 +143,31 @@ def TS_STRIP(line):
     return re.sub(r'^\[[^\]]{10,30}\]\s*', '', line)
 
 
+# ── Chamber history ────────────────────────────────────────────────────────────
+
+def load_camara(boots):
+    """Chamber samples covering the log ([] when the monitor is unreachable)."""
+    ts = [b['ts'] for b in boots if b['ts']]
+    if not ts:
+        return []
+    samples, erro = camara_hist.carregar(min(ts), max(ts))
+    if erro:
+        print(f'Aviso: histórico da câmara indisponível ({erro}); relatório sem a câmara.')
+    return samples
+
+
+def attach_camara(boots, samples):
+    """Puts the chamber PV of the nearest sample in each boot's temps."""
+    n = 0
+    for b in boots:
+        s = camara_hist.mais_proxima(samples, b['login_ts'] or b['ts'])  # temps read after login
+        if s:
+            b['temps'][CAMARA] = s.pv
+            b['cam_sp'] = s.sp
+            n += 1
+    return n
+
+
 # ── Yodiz fragment ─────────────────────────────────────────────────────────────
 
 S = {
@@ -172,7 +206,27 @@ def fmt_dur(sec):
     return f'{h}h{rem // 60:02d}min'
 
 
-def build(boots, info, logname, title, ref):
+def band_table(done, ref, titulo):
+    refd = [b for b in done if ref in b['temps']]
+    if not refd:
+        return []
+    lo = int(min(b['temps'][ref] for b in refd) // BAND_C) * BAND_C
+    hi = int(max(b['temps'][ref] for b in refd) // BAND_C) * BAND_C
+    p = [f'<h3 style="{S["h3"]}">{esc(titulo)}</h3>',
+         f'<table style="{S["tbl"]}"><tr>{th("Faixa (°C)")}{th("Boots")}'
+         f'{th("OK")}{th("Falhas")}</tr>']
+    for b0 in range(lo, hi + 1, BAND_C):
+        bb = [b for b in refd if b0 <= b['temps'][ref] < b0 + BAND_C]
+        if not bb:
+            continue
+        nf = sum(b['status'] == 'fail' for b in bb)
+        p.append(f'<tr>{td(f"{b0} a {b0 + BAND_C}")}{tdr(len(bb))}'
+                 f'{tdr(len(bb) - nf)}{tds("fail" if nf else "pass", nf)}</tr>')
+    p.append('</table>')
+    return p
+
+
+def build(boots, info, logname, title, ref, samples=()):
     done  = [b for b in boots if b['status'] != 'pending']
     fails = [b for b in done if b['status'] == 'fail']
     ts = [b['ts'] for b in boots if b['ts']]
@@ -184,6 +238,13 @@ def build(boots, info, logname, title, ref):
     if info['dut']:    meta.append(f'<b>DUT:</b> {esc(info["dut"])}')
     if info['fw']:     meta.append(f'<b>FW:</b> {esc(info["fw"])}')
     if info['commit']: meta.append(f'<b>Lua:</b> {esc(info["commit"])}')
+    if samples:
+        perfis = camara_hist.perfis(samples)
+        pv = [s.pv for s in samples]
+        cam = f'PV de {min(pv):.1f} a {max(pv):.1f} °C'
+        if perfis:
+            cam = f'perfil {", ".join(perfis)}, ' + cam
+        meta.append(f'<b>Câmara:</b> {esc(cam)}')
     p.append(f'<p style="{S["p"]}">' + ' &nbsp;|&nbsp; '.join(meta) + '</p>')
     n_items = max((len(b['report']) for b in done), default=0)
     p.append(f'<p style="{S["p"]}"><b>Critério:</b> a cada boot, <code>ft_card_init</code> = 55 '
@@ -212,6 +273,10 @@ def build(boots, info, logname, title, ref):
                 tip += f' | {b["ts"]:%d/%m %H:%M}'
             if ref in b['temps']:
                 tip += f' | {ref}={b["temps"][ref]:.1f} C'
+            if CAMARA in b['temps'] and ref != CAMARA:
+                tip += f' | câmara={b["temps"][CAMARA]:.1f} C'
+                if b.get('cam_sp') is not None:
+                    tip += f' (SP {b["cam_sp"]:.1f})'
             if b['bad_items']:
                 tip += ' | ' + ', '.join(b['bad_items'])
             p.append(f'<td title="{esc(tip)}" style="{cell};color:{c};background:{bg}">{b["n"]}</td>')
@@ -228,13 +293,19 @@ def build(boots, info, logname, title, ref):
         for b in fails:
             for it in b['bad_items']:
                 count.setdefault(it, []).append(b)
+        com_cam = ref != CAMARA and any(CAMARA in b['temps'] for b in fails)
         p.append(f'<h3 style="{S["h3"]}">Itens com falha</h3>')
         p.append(f'<table style="{S["tbl"]}"><tr>{th("Item")}{th("Ocorrências")}'
-                 f'{th("Boots")}{th(f"{esc(ref)} nos boots (°C)")}</tr>')
+                 f'{th("Boots")}{th(f"{esc(ref)} nos boots (°C)")}'
+                 + (th('Câmara nos boots (°C)') if com_cam else '') + '</tr>')
         for it, bl in sorted(count.items(), key=lambda x: -len(x[1])):
             temps = [f'{b["temps"][ref]:.1f}' for b in bl if ref in b['temps']]
-            p.append(f'<tr>{td(it)}{tdr(f"{len(bl)}/{len(done)}")}'
-                     f'{td(", ".join(str(b["n"]) for b in bl))}{td(", ".join(temps) or "-")}</tr>')
+            linha = (f'<tr>{td(it)}{tdr(f"{len(bl)}/{len(done)}")}'
+                     f'{td(", ".join(str(b["n"]) for b in bl))}{td(", ".join(temps) or "-")}')
+            if com_cam:
+                cam = [f'{b["temps"][CAMARA]:.1f}' if CAMARA in b['temps'] else '-' for b in bl]
+                linha += td(', '.join(cam))
+            p.append(linha + '</tr>')
         p.append('</table>')
 
     # Temperature coverage
@@ -256,22 +327,10 @@ def build(boots, info, logname, title, ref):
                      f'{tdr(f(avg(vo)))}{tdr(f(avg(vf)))}</tr>')
         p.append('</table>')
 
-        # Boots per temperature band
-        refd = [b for b in done if ref in b['temps']]
-        if refd:
-            lo = int(min(b['temps'][ref] for b in refd) // BAND_C) * BAND_C
-            hi = int(max(b['temps'][ref] for b in refd) // BAND_C) * BAND_C
-            p.append(f'<h3 style="{S["h3"]}">Boots por faixa de temperatura ({esc(ref)})</h3>')
-            p.append(f'<table style="{S["tbl"]}"><tr>{th("Faixa (°C)")}{th("Boots")}'
-                     f'{th("OK")}{th("Falhas")}</tr>')
-            for b0 in range(lo, hi + 1, BAND_C):
-                bb = [b for b in refd if b0 <= b['temps'][ref] < b0 + BAND_C]
-                if not bb:
-                    continue
-                nf = sum(b['status'] == 'fail' for b in bb)
-                p.append(f'<tr>{td(f"{b0} a {b0 + BAND_C}")}{tdr(len(bb))}'
-                         f'{tdr(len(bb) - nf)}{tds("fail" if nf else "pass", nf)}</tr>')
-            p.append('</table>')
+        # Boots per temperature band: reference sensor, then chamber PV
+        p += band_table(done, ref, f'Boots por faixa de temperatura ({ref})')
+        if ref != CAMARA:
+            p += band_table(done, CAMARA, 'Boots por faixa de temperatura da câmara (PV)')
 
     # Measurements along the run
     rails = []
@@ -296,8 +355,13 @@ def build(boots, info, logname, title, ref):
                      f'{tdr(f"{avg(v):.3f}")}{tdr(f"{max(v):.3f}")}</tr>')
         p.append('</table>')
 
-    p.append(f'<p style="{S["note"]}">Temperaturas lidas no início do verify de cada boot. '
-             f'Faixas de {BAND_C} °C pelo sensor {esc(ref)}.</p>')
+    nota = (f'Temperaturas lidas no início do verify de cada boot. '
+            f'Faixas de {BAND_C} °C pelo sensor {esc(ref)}.')
+    n_cam = sum(CAMARA in b['temps'] for b in done)
+    if n_cam:
+        nota += (f' Câmara PV = temperatura medida pelo controlador da câmara no momento '
+                 f'do login, com leitura em {n_cam} de {len(done)} boots.')
+    p.append(f'<p style="{S["note"]}">{nota}</p>')
     return ''.join(p)
 
 
@@ -305,6 +369,9 @@ def main():
     args = sys.argv[1:]
     title = 'Reboots com verify — câmara climática'
     ref = 'Temp 1'
+    usar_camara = '--sem-camara' not in args
+    if not usar_camara:
+        args.remove('--sem-camara')
     for opt in ('--title', '--ref'):
         if opt in args:
             k = args.index(opt)
@@ -331,15 +398,21 @@ def main():
     if not boots:
         print('Nenhum boot encontrado.')
         sys.exit(1)
+    samples = load_camara(boots) if usar_camara else []
+    if usar_camara:
+        n = attach_camara(boots, samples)
+        print(f'Câmara: {len(samples)} leituras no período, {n} de {len(boots)} boots com leitura')
     for b in boots:
         tmp = ' '.join(f'{k}={v:.1f}' for k, v in list(b['temps'].items())[:3])
+        if CAMARA in b['temps']:
+            tmp += f' câmara={b["temps"][CAMARA]:.1f}'
         print(f'  Boot {b["n"]:4d} | {b["ts"]:%d/%m %H:%M:%S} | itens={len(b["report"]):3d} | '
               f'{LABEL[b["status"]]:12s} | {tmp} {"| " + ", ".join(b["bad_items"]) if b["bad_items"] else ""}')
     n_bad = sum(b['status'] == 'fail' for b in boots)
     print(f'Total: {len(boots)} boots | {n_bad} falha(s)')
 
     out = Path.cwd() / (fp.stem + '_verify_task.html')
-    out.write_text(build(boots, info, fp.name, title, ref), encoding='utf-8')
+    out.write_text(build(boots, info, fp.name, title, ref, samples), encoding='utf-8')
     print(f'\nFragmento Yodiz: {out}')
     os.startfile(out)
 

@@ -10,8 +10,12 @@ New in v3:
     - AVS voltage chart (sensors 2/5/6)
     - Bug investigation cards: BG-2323, BG-2136, BG-2109
 
+Chamber PV (measured temperature) and SP enter the temperature chart, the
+timeline and the summary table, read from the chamber monitor history
+(http://172.22.239.100/camara, 1 sample/min, kept 31 days).
+
 Usage:
-    python analyze_loop_test.py <log_file.log>
+    python analyze_loop_test.py <log_file.log> [--sem-camara]
 """
 
 import os
@@ -20,6 +24,11 @@ import sys
 import json
 from datetime import datetime
 from pathlib import Path
+
+import camara_hist
+
+CAM_PV = 'Câmara PV'
+CAM_SP = 'Câmara SP'
 
 
 # ── Timestamp ──────────────────────────────────────────────────────────────────
@@ -591,6 +600,33 @@ def normalize_sensors(loops):
     return ordered[:8]
 
 
+# ── Chamber history ────────────────────────────────────────────────────────────
+
+def attach_camara(loops, sensor_keys):
+    """Adds chamber PV/SP (nearest sample to each loop's test start) as two more
+    sensors. Returns (leituras, n_loops_with_reading); sensor_keys is extended."""
+    times = [l['login_time'] for l in loops if l['login_time']]
+    if not times:
+        return [], 0
+    ends = [l['end_time'] for l in loops if l['end_time']]
+    leituras, erro = camara_hist.carregar(min(times), max(times + ends))
+    if erro:
+        print(f'Aviso: historico da camara indisponivel ({erro}); relatorio sem a camara.')
+        return [], 0
+    n = 0
+    for l in loops:
+        s = camara_hist.mais_proxima(leituras, l['test_start'] or l['login_time'])
+        if s:
+            l['sensors'][CAM_PV] = s.pv
+            if s.sp is not None:
+                l['sensors'][CAM_SP] = s.sp
+            n += 1
+    if n:
+        sensor_keys += [k for k in (CAM_PV, CAM_SP)
+                        if any(k in l['sensors'] for l in loops)]
+    return leituras, n
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def avg(lst):
@@ -790,6 +826,13 @@ COLORS = [
     ('#558b2f', 'rgba(85,139,47,.07)'),
 ]
 
+# Chamber series: neutral ink so they read as the environment, not a DUT sensor;
+# third item is the line dash (setpoint dashed, drawn without points)
+CAM_COLORS = {
+    CAM_PV: ('#263238', 'rgba(38,50,56,.07)', []),
+    CAM_SP: ('#263238', 'rgba(38,50,56,.07)', [6, 4]),
+}
+
 AVS_COLORS = [
     ('#1565c0', 'rgba(21,101,192,.15)'),
     ('#e65100', 'rgba(230,81,0,.15)'),
@@ -987,7 +1030,9 @@ new Chart(document.getElementById('ch'), {{
       data: D.map(d => d.temps[name] ?? null),
       borderColor: colors[i][0],
       backgroundColor: colors[i][1],
-      pointRadius: 5, tension: .3, fill: false,
+      borderDash: colors[i][2] || [],
+      pointRadius: (colors[i][2] || []).length ? 0 : 5,
+      tension: .3, fill: false,
       spanGaps: true,
     }})),
   }},
@@ -1387,7 +1432,7 @@ def build_avs_section_html(loops):
 
 # ── Report builder ─────────────────────────────────────────────────────────────
 
-def build(loops, filepath, sensor_keys, ref_ok):
+def build(loops, filepath, sensor_keys, ref_ok, camara=()):
     n_pass      = sum(1 for l in loops if loop_status(l) == 'pass')
     n_warn      = sum(1 for l in loops if loop_status(l) == 'warn')
     n_fail      = sum(1 for l in loops if loop_status(l) == 'fail')
@@ -1426,7 +1471,12 @@ def build(loops, filepath, sensor_keys, ref_ok):
         else:
             lua_label = f'Lua: {sha_short_first}' + (f' ({date_str})' if date_str else '')
         extra_parts.append(lua_label)
-    extra_info = (' &nbsp;|&nbsp; ' + ' &nbsp;|&nbsp; '.join(extra_parts)) if extra_parts else ''
+    if camara:
+        pv = [s.pv for s in camara]
+        perfis = camara_hist.perfis(camara)
+        extra_parts.append('Câmara: ' + (f'{", ".join(perfis)}, ' if perfis else '')
+                           + f'PV {min(pv):.1f} a {max(pv):.1f}C')
+    extra_info =(' &nbsp;|&nbsp; ' + ' &nbsp;|&nbsp; '.join(extra_parts)) if extra_parts else ''
 
     def _first(key):
         return next((l[key] for l in loops if l.get(key)), None)
@@ -1772,7 +1822,9 @@ def build(loops, filepath, sensor_keys, ref_ok):
             f'</tr>'
         )
 
-    colors_used = COLORS[:len(sensor_keys)]
+    dut_keys    = [k for k in sensor_keys if k not in CAM_COLORS]
+    colors_used = [CAM_COLORS[k] if k in CAM_COLORS else COLORS[dut_keys.index(k)]
+                   for k in sensor_keys]
 
     # BCM143 JSON for chart
     bcm143_json = json.dumps([{
@@ -1849,12 +1901,15 @@ def resolve_log_path(arg):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print('Uso: analyze_loop_test <arquivo.log>')
+    args = sys.argv[1:]
+    usar_camara = '--sem-camara' not in args
+    args = [a for a in args if a != '--sem-camara']
+    if not args:
+        print('Uso: analyze_loop_test <arquivo.log> [--sem-camara]')
         print(f'     (busca automatica em {TERATERM_DIR} se nao encontrar o caminho)')
         sys.exit(1)
 
-    fp = resolve_log_path(sys.argv[1])
+    fp = resolve_log_path(args[0])
     if not fp.exists():
         print(f'Arquivo nao encontrado: {fp}')
         sys.exit(1)
@@ -1874,6 +1929,12 @@ def main():
 
     sensor_keys = normalize_sensors(loops)
     print(f'Sensores detectados: {", ".join(sensor_keys) or "(nenhum)"}')
+
+    camara = []
+    if usar_camara:
+        camara, n_cam = attach_camara(loops, sensor_keys)
+        if camara:
+            print(f'Camara: {len(camara)} leituras no periodo, {n_cam} de {len(loops)} loops com leitura')
 
     ref_ok = compute_boot_stats(loops)
     if ref_ok > 0:
@@ -1927,7 +1988,7 @@ def main():
             for f in l.get('boot_unexpected', []):
                 print(f'             ~ boot: {f}')
 
-    out = build(loops, fp, sensor_keys, ref_ok)
+    out = build(loops, fp, sensor_keys, ref_ok, camara)
     print(f'\nRelatorio: {out}')
     os.startfile(out)
 
