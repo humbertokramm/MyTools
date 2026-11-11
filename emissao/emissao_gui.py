@@ -148,6 +148,12 @@ class App:
         self.medidas = {}          # iid da arvore -> medida (folhas)
         self.grupos = {}           # iid de uma execucao (hora) -> [medidas]
         root.title(APP)
+        try:        # no exe o icone vem embutido (sys._MEIPASS)
+            root.iconbitmap(os.path.join(
+                getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))),
+                'emissao.ico'))
+        except tk.TclError:
+            pass
         root.minsize(1000, 680)
         sys.stdout = _SaidaNaFila(self.fila)
 

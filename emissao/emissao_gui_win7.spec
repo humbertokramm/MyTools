@@ -31,7 +31,7 @@ a = Analysis(
     ['emissao_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('emissao.ico', '.')],       # icone da janela
     # pyvisa_py: backend em Python puro. O pyvisa cai nele sozinho quando o
     # PC nao tem VISA da arquitetura do exe (o PC do N9010A so tem o de 32
     # bits), e ele e carregado por nome, entao o PyInstaller nao o acha.
@@ -82,4 +82,5 @@ exe = EXE(
     upx=False,
     runtime_tmpdir=None,
     console=False,
+    icon='emissao.ico',
 )

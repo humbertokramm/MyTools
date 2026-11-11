@@ -14,6 +14,7 @@ python emissao_gui.py
 | `sa.py`, `agilent_sa.py` | Driver VISA do analisador |
 | `radiada_plot.py` | Leitura dos CSVs (usada pela análise) |
 | `emissao_gui_win7.spec`, `build_emissao_exe.bat` | Build do exe |
+| `emissao.ico`, `gera_icone.py` | Ícone do exe e da janela, e o script que o desenha |
 
 ## Captura
 
