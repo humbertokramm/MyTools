@@ -18,3 +18,4 @@ dist/
 *.bak
 HTTP/version_info.txt
 HTTP/http_server_config.json
+emissao/emissao_gui.json
