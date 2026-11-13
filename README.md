@@ -82,6 +82,7 @@ SC -->|captura CSV| CS
 | `updateLibScript.py` | `check_site`, `check_and_pull` | Atualiza repositórios Git locais |
 | `registrarhook.py` | CLI | Instala o hook `commit-msg` do Gerrit num repo (Change-Id automático); baixa via `pscp`/Pageant com fallback HTTPS |
 | `pcbview.py` | CLI / `abrir()` | Abre o *Viewer PCB & 3D* da empresa já no componente, com o projeto carregado e só a camada do lado dele |
+| `tftp_sync.py` | bandeja / CLI | Mantém `~/tftp/1berto` do pc da câmara igual a `C:\Testes\TFTP` (`*.lua`, `*.tar*`) por scp; abre com `tftp_sync.bat` |
 | `emissao/` | `emissao_gui.py` | Emissão radiada e conduzida no N9010A: captura e análise numa janela só ([README](emissao/README.md)) |
 
 ---
