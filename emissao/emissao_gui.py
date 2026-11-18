@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import matplotlib
 matplotlib.use('TkAgg')
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
@@ -103,8 +104,8 @@ class OperadorGUI(cap.Operador):
         self._resposta = valor
         self._libera.set()
 
-    def prompt(self, texto):
-        self._espera(('prompt', texto))
+    def prompt(self, texto, pular=False):
+        return self._espera(('prompt', (texto, pular)))
 
     def confirma(self, texto):
         return self._espera(('confirma', texto))
@@ -147,6 +148,8 @@ class App:
         self.op = None
         self.medidas = {}          # iid da arvore -> medida (folhas)
         self.grupos = {}           # iid de uma execucao (hora) -> [medidas]
+        # pontos marcados na analise [[freq_MHz, valor]], comuns a todos os graficos
+        self.marcas = [list(m) for m in self.cfg.get('marcas', [])]
         root.title(APP)
         try:        # no exe o icone vem embutido (sys._MEIPASS)
             root.iconbitmap(os.path.join(
@@ -183,16 +186,30 @@ class App:
         self.classe = tk.StringVar(value=c.get('classe', 'A'))
         self.raiz = tk.StringVar(value=c.get('raiz', r'T:\1berto\Medidas'))
         self.n = tk.StringVar()
-        self.pol = tk.StringVar(value=c.get('pol', 'V'))
-        self.tensao = tk.StringVar(value=c.get('tensao', '127'))
-        self.tensoes = tk.StringVar(value=c.get('tensoes', '127Vac'))
+        # cenarios: opcoes fixas marcadas + extras digitados (separados por ;)
+        def marcas_de(chave, opcoes, padrao):
+            salvo = c.get(chave, padrao)
+            return {o: tk.BooleanVar(value=o in salvo) for o in opcoes}
+        self.tens_sel = marcas_de('tensoes_sel', cap.TENSOES_PADRAO, cap.TENSOES_PADRAO)
+        self.tens_extra = tk.StringVar(value=c.get('tensao_extra', ''))
+        self.slot_sel = marcas_de('slots_sel', cap.SLOTS_PADRAO, cap.SLOTS_PADRAO)
+        self.slot_extra = tk.StringVar(value=c.get('slot_extra', ''))
+        self.pol_sel = marcas_de('pols_sel', cap.POLS, cap.POLS)
+        self.amb_modo = tk.StringVar(value=cap.modo_ambiente(c.get('amb_modo', cap.AMB_CADA)))
+        self.amb_n = tk.StringVar(value=str(c.get('amb_n', 3)))
+        self.ordens = {e: [d for d in c.get('ordem', {}).get(e, []) if d in cap.DIMENSOES[e]]
+                       for e in ENSAIOS}
+        for e in ENSAIOS:          # completa com o que faltar (config antiga)
+            self.ordens[e] += [d for d in cap.DIMENSOES[e] if d not in self.ordens[e]]
         self.bandas = tk.StringVar()
         self.state = tk.StringVar()
 
         def linha(r, rotulo):
-            ttk.Label(f, text=rotulo).grid(row=r, column=0, sticky='e', **pad)
+            lb = ttk.Label(f, text=rotulo)
+            lb.grid(row=r, column=0, sticky='e', **pad)
             fr = ttk.Frame(f)
             fr.grid(row=r, column=1, sticky='ew', **pad)
+            fr.rotulo = lb             # para esconder a linha inteira
             return fr
 
         fr = linha(0, 'Analisador (IP)')
@@ -218,27 +235,58 @@ class App:
         ttk.Entry(fr, textvariable=self.raiz).pack(side='left', fill='x', expand=True)
         ttk.Button(fr, text='...', width=3, command=self._escolhe_raiz).pack(side='left', padx=4)
 
-        # so um destes dois aparece, conforme o ensaio
-        self.fr_rad = linha(3, 'EUT')
-        ttk.Label(self.fr_rad, text='Polarização').pack(side='left')
-        ttk.Combobox(self.fr_rad, textvariable=self.pol, values=['H', 'V'], width=3,
-                     state='readonly').pack(side='left', padx=(2, 12))
-        ttk.Label(self.fr_rad, text='Tensão').pack(side='left')
-        ttk.Entry(self.fr_rad, textvariable=self.tensao, width=24).pack(side='left', padx=2)
-        ttk.Label(self.fr_rad, text='(vai no nome da pasta e dos arquivos)',
-                  foreground='gray').pack(side='left', padx=6)
-        self.fr_con = linha(3, 'EUT')
-        ttk.Label(self.fr_con, text='Tensões').pack(side='left')
-        ttk.Entry(self.fr_con, textvariable=self.tensoes, width=44).pack(side='left', padx=2)
-        ttk.Label(self.fr_con, text='(separadas por ;  — L1 e L2 em cada uma)',
-                  foreground='gray').pack(side='left', padx=6)
+        def opcoes(fr, sel, extra, dica):
+            for o, v in sel.items():
+                ttk.Checkbutton(fr, text=o, variable=v,
+                                command=self._resumo).pack(side='left', padx=(0, 8))
+            if extra is not None:
+                ttk.Label(fr, text='Outra:').pack(side='left', padx=(6, 2))
+                ttk.Entry(fr, textvariable=extra, width=18).pack(side='left')
+                ttk.Label(fr, text=dica, foreground='gray').pack(side='left', padx=6)
 
-        fr = linha(4, 'Bandas (MHz)')
+        opcoes(linha(3, 'Tensões'), self.tens_sel, self.tens_extra,
+               '(mais de uma: separe por ;)')
+        opcoes(linha(4, 'Slots da PSU'), self.slot_sel, self.slot_extra,
+               '(nenhum marcado: equipamento sem slot)')
+        self.fr_pol = linha(5, 'Polarização')
+        opcoes(self.fr_pol, self.pol_sel, None, '')
+
+        self.fr_amb = fr = linha(6, 'Ambiente')
+        ttk.Label(fr, text='depois do EUT:').pack(side='left', padx=(0, 6))
+        for valor, texto in ((cap.AMB_CADA, 'em cada combinação'),
+                             (cap.AMB_POL, 'por polarização:'),
+                             (cap.AMB_NAO, 'não medir')):
+            ttk.Radiobutton(fr, text=texto, variable=self.amb_modo, value=valor,
+                            command=self._resumo).pack(side='left', padx=(0, 4))
+            if valor == cap.AMB_POL:
+                ttk.Spinbox(fr, from_=1, to=20, textvariable=self.amb_n, width=3,
+                            command=self._resumo).pack(side='left')
+                ttk.Label(fr, text='medição(ões)').pack(side='left', padx=(2, 12))
+
+        fr = linha(7, 'Ordem das trocas')
+        self.lst_ordem = tk.Listbox(fr, height=3, width=14, exportselection=False,
+                                    activestyle='none')
+        self.lst_ordem.pack(side='left')
+        bts = ttk.Frame(fr)
+        bts.pack(side='left', padx=4)
+        ttk.Button(bts, text='▲', width=3, command=lambda: self._move_ordem(-1)).pack()
+        ttk.Button(bts, text='▼', width=3, command=lambda: self._move_ordem(1)).pack()
+        info = ttk.Frame(fr)
+        info.pack(side='left', padx=6, fill='x', expand=True)
+        ttk.Label(info, text='a de cima troca menos vezes; a de baixo, a cada combinação',
+                  foreground='gray').pack(anchor='w')
+        self.lb_resumo = ttk.Label(info, text='')
+        self.lb_resumo.pack(anchor='w', pady=(4, 0))
+        for v in (self.tens_extra, self.slot_extra, self.amb_n):
+            v.trace_add('write', lambda *a: self._resumo())
+
+        fr = linha(8, 'Bandas (MHz)')
         ttk.Entry(fr, textvariable=self.bandas).pack(side='left', fill='x', expand=True)
-        fr = linha(5, 'State no analisador')
+        self.bandas.trace_add('write', lambda *a: self._resumo())
+        fr = linha(9, 'State no analisador')
         ttk.Entry(fr, textvariable=self.state).pack(side='left', fill='x', expand=True)
 
-        fr = linha(6, '')
+        fr = linha(10, '')
         self.bt_iniciar = ttk.Button(fr, text='Iniciar captura', command=self._iniciar)
         self.bt_iniciar.pack(side='left')
         self.bt_abortar = ttk.Button(fr, text='Abortar', command=self._abortar,
@@ -246,18 +294,24 @@ class App:
         self.bt_abortar.pack(side='left', padx=6)
 
         # aviso ao operador: pisca ate ele confirmar
-        self.aviso = tk.Label(f, text='', font=('', 14, 'bold'), height=2, relief='groove')
-        self.aviso.grid(row=7, column=0, columnspan=2, sticky='ew', pady=(8, 2))
-        self.bt_continuar = ttk.Button(f, text='Continuar (Enter)', command=self._continuar,
+        self.aviso = tk.Label(f, text='', font=('', 14, 'bold'), height=3, relief='groove',
+                              wraplength=980, justify='center')
+        self.aviso.grid(row=11, column=0, columnspan=2, sticky='ew', pady=(8, 2))
+        bts = ttk.Frame(f)
+        bts.grid(row=12, column=0, columnspan=2)
+        self.bt_continuar = ttk.Button(bts, text='Continuar (Enter)', command=self._continuar,
                                        state='disabled')
-        self.bt_continuar.grid(row=8, column=0, columnspan=2)
+        self.bt_continuar.pack(side='left')
+        self.bt_pular = ttk.Button(bts, text='Pular esta combinação', command=self._pular,
+                                   state='disabled')
+        self.bt_pular.pack(side='left', padx=8)
         self.root.bind('<Return>', lambda e: self._continuar())
 
         self.pb = ttk.Progressbar(f, maximum=100)
-        self.pb.grid(row=9, column=0, columnspan=2, sticky='ew', pady=6)
+        self.pb.grid(row=13, column=0, columnspan=2, sticky='ew', pady=6)
         fr = ttk.Frame(f)
-        fr.grid(row=10, column=0, columnspan=2, sticky='nsew')
-        f.rowconfigure(10, weight=1)
+        fr.grid(row=14, column=0, columnspan=2, sticky='nsew')
+        f.rowconfigure(14, weight=1)
         self.txt = tk.Text(fr, height=12, state='disabled', wrap='word')
         sb = ttk.Scrollbar(fr, command=self.txt.yview)
         self.txt.configure(yscrollcommand=sb.set)
@@ -283,9 +337,75 @@ class App:
         self.n.set(salvo.get('n', str(cap.VARREDURAS[e])))
         self.bandas.set(salvo.get('bandas', bandas_txt(cap.BANDAS[e])))
         self.state.set(salvo.get('state', cap.STATES[e][cl]))
-        (self.fr_con if e == 'Radiada' else self.fr_rad).grid_remove()
-        (self.fr_rad if e == 'Radiada' else self.fr_con).grid()
+        for fr in (self.fr_pol, self.fr_amb):          # so na radiada
+            for w in (fr, fr.rotulo):
+                w.grid() if e == 'Radiada' else w.grid_remove()
         self._ensaio_mostrado = self._chave()
+        self._mostra_ordem()
+
+    # cenarios ---------------------------------------------------------
+    @staticmethod
+    def _lista(sel, extra):
+        """Opcoes marcadas + extras digitados, prontos para o nome do arquivo."""
+        res = [o for o, v in sel.items() if v.get()]
+        for x in extra.get().split(';') if extra is not None else []:
+            x = cap.limpa_nome(x)
+            if x and x not in res:
+                res.append(x)
+        return res
+
+    def _mostra_ordem(self):
+        self.lst_ordem.delete(0, 'end')
+        for i, d in enumerate(self.ordens[self.ensaio.get()]):
+            self.lst_ordem.insert('end', '{}. {}'.format(i + 1, d))
+        self._resumo()
+
+    def _move_ordem(self, passo):
+        sel = self.lst_ordem.curselection()
+        ordem = self.ordens[self.ensaio.get()]
+        if not sel:
+            return
+        i, j = sel[0], sel[0] + passo
+        if 0 <= j < len(ordem):
+            ordem[i], ordem[j] = ordem[j], ordem[i]
+            self._mostra_ordem()
+            self.lst_ordem.selection_set(j)
+
+    def _cenarios(self):
+        """(tensoes, slots, pols, combinacoes) do que esta marcado na tela."""
+        tensoes = self._lista(self.tens_sel, self.tens_extra)
+        slots = self._lista(self.slot_sel, self.slot_extra)
+        pols = self._lista(self.pol_sel, None)
+        e = self.ensaio.get()
+        valores = {'Polarização': pols, 'Slot': slots, 'Tensão': tensoes}
+        combos = cap.combinacoes(self.ordens[e], valores)
+        return tensoes, slots, pols, combos
+
+    def _resumo(self):
+        """Quantas combinacoes e capturas a execucao vai ter."""
+        if not hasattr(self, 'lb_resumo'):
+            return
+        tensoes, slots, pols, combos = self._cenarios()
+        try:
+            bandas = bandas_de(self.bandas.get())
+        except ValueError:
+            bandas = []
+        if not tensoes or (self.ensaio.get() == 'Radiada' and not pols) or not bandas:
+            self.lb_resumo.config(text='Marque ao menos uma tensão'
+                                  + (' e uma polarização' if self.ensaio.get() == 'Radiada'
+                                     else '') + '.', foreground='#c0392b')
+            return
+        if self.ensaio.get() == 'Radiada':
+            try:
+                amb_n = max(1, int(self.amb_n.get()))
+            except ValueError:
+                amb_n = 1
+            capt = cap.plano_radiada(combos, pols, cap.etapas_radiada(bandas),
+                                     self.amb_modo.get(), amb_n)
+        else:
+            capt = len(combos) * 2 * len(bandas)
+        self.lb_resumo.config(text='{} combinação(ões), {} captura(s)'.format(
+            len(combos), capt), foreground='')
 
     def _escolhe_raiz(self):
         d = filedialog.askdirectory(title='Pasta das medidas', initialdir=self.raiz.get())
@@ -296,8 +416,15 @@ class App:
     def _persiste(self):
         self._guarda_ensaio()
         self.cfg.update(ip=self.ip.get(), ensaio=self.ensaio.get(), classe=self.classe.get(),
-                        raiz=self.raiz.get(), pol=self.pol.get(), tensao=self.tensao.get(),
-                        tensoes=self.tensoes.get())
+                        raiz=self.raiz.get(),
+                        tensoes_sel=[o for o, v in self.tens_sel.items() if v.get()],
+                        tensao_extra=self.tens_extra.get(),
+                        slots_sel=[o for o, v in self.slot_sel.items() if v.get()],
+                        slot_extra=self.slot_extra.get(),
+                        pols_sel=[o for o, v in self.pol_sel.items() if v.get()],
+                        amb_modo=self.amb_modo.get(), amb_n=self.amb_n.get(),
+                        ordem=self.ordens, marcas=self.marcas,
+                        trava_amp=self.trava_amp.get(), trava_freq=self.trava_freq.get())
         save_config(self.cfg)
 
     def _log(self, texto):
@@ -339,20 +466,28 @@ class App:
             messagebox.showerror(APP, 'Varreduras ou bandas inválidas: {}'.format(err))
             return
         raiz, state = self.raiz.get().strip(), self.state.get().strip()
+        tensoes, slots, pols, combos = self._cenarios()
+        ordem = list(self.ordens[e])
+        if not tensoes:
+            messagebox.showerror(APP, 'Marque ou digite ao menos uma tensão.')
+            return
         if e == 'Radiada':
-            pol, tensao = self.pol.get(), self.tensao.get().strip()
-            if not tensao:
-                messagebox.showerror(APP, 'Informe a tensão do EUT.')
+            if not pols:
+                messagebox.showerror(APP, 'Marque ao menos uma polarização.')
                 return
-            seq = lambda sa, op: cap.radiada(sa, op, raiz, classe, pol, tensao, n,
-                                             bandas, state=state)
+            modo = self.amb_modo.get()
+            try:
+                amb_n = int(self.amb_n.get())
+                if amb_n < 1:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror(APP, 'Número de medições de ambiente inválido.')
+                return
+            seq = lambda sa, op: cap.radiada(sa, op, raiz, classe, n, tensoes, slots, pols,
+                                             ordem, modo, amb_n, bandas, state=state)
         else:
-            tensoes = [t.strip() for t in self.tensoes.get().split(';') if t.strip()]
-            if not tensoes:
-                messagebox.showerror(APP, 'Informe ao menos uma tensão.')
-                return
-            seq = lambda sa, op: cap.conduzida(sa, op, raiz, classe, tensoes, n,
-                                               bandas, state=state)
+            seq = lambda sa, op: cap.conduzida(sa, op, raiz, classe, n, tensoes, slots,
+                                               ordem, bandas, state=state)
         self._persiste()
         ip = self.ip.get().strip()
         self.op = op = OperadorGUI(self.fila)
@@ -360,7 +495,11 @@ class App:
         self.bt_abortar.state(['!disabled'])
         self.pb['value'] = 0
         self._log('=' * 60)
-        self._log('{} classe {} — conectando em {} ...'.format(e, classe, ip))
+        self._log('{} classe {}: {} combinação(ões), nesta ordem:'.format(
+            e, classe, len(combos)))
+        for k, c in enumerate(combos):
+            self._log('  {:2d}. {}'.format(k + 1, '  '.join(v for v in c.values() if v)))
+        self._log('Conectando em {} ...'.format(ip))
 
         def tarefa():
             sa, pasta = None, None
@@ -390,10 +529,11 @@ class App:
             self._some_aviso()
 
     # aviso piscando
-    def _mostra_aviso(self, texto):
+    def _mostra_aviso(self, texto, pular=False):
         self._aviso_on = True
         self.aviso.config(text=texto)
         self.bt_continuar.state(['!disabled'])
+        self.bt_pular.state(['!disabled'] if pular else ['disabled'])
         self.nb.select(self.aba_cap)
         self.root.deiconify()
         self.root.lift()
@@ -411,11 +551,24 @@ class App:
         self._aviso_on = False
         self.aviso.config(text='', bg=self.root.cget('bg'))
         self.bt_continuar.state(['disabled'])
+        self.bt_pular.state(['disabled'])
 
     def _continuar(self):
         if getattr(self, '_aviso_on', False) and self.op is not None:
             self._some_aviso()
             self.op.responde()
+
+    def _pular(self):
+        """Segue para a proxima combinacao sem medir esta."""
+        if not (getattr(self, '_aviso_on', False) and self.op is not None
+                and self.bt_pular.instate(['!disabled'])):
+            return
+        if not messagebox.askyesno(
+                APP, 'Pular esta combinação e seguir para a próxima?\n\n'
+                     'Ela fica sem medir; a lista das puladas sai no log no fim.'):
+            return
+        self._some_aviso()
+        self.op.responde(cap.PULAR)
 
     # ------------------------------------------------------------------
     # Analise
@@ -448,13 +601,29 @@ class App:
         dir_.rowconfigure(1, weight=1)
         self.fig = Figure(figsize=(9, 5), dpi=100, facecolor=an.BG)
         self.canvas = FigureCanvasTkAgg(self.fig, master=dir_)
-        barra = ttk.Frame(dir_)
-        barra.grid(row=0, column=0, sticky='ew')
-        NavigationToolbar2Tk(self.canvas, barra, pack_toolbar=False).pack(side='left')
+        topo = ttk.Frame(dir_)
+        topo.grid(row=0, column=0, sticky='ew')
+        barra = ttk.Frame(topo)
+        barra.pack(fill='x')
+        self.toolbar = NavigationToolbar2Tk(self.canvas, barra, pack_toolbar=False)
+        self.toolbar.pack(side='left')
         ttk.Button(barra, text='Salvar PNG', command=self._salva_png).pack(side='right')
-        ttk.Label(barra, text='arraste = ΔF   |   duplo clique limpa   |   '
-                              'clique na legenda liga/desliga',
-                  foreground='gray').pack(side='right', padx=8)
+        ttk.Button(barra, text='Salvar todos...',
+                   command=self._salva_todos).pack(side='right', padx=4)
+        # ao trocar de grafico, mantem a escala que esta na tela
+        opc = ttk.Frame(topo)
+        opc.pack(fill='x', pady=(2, 0))
+        self.trava_amp = tk.BooleanVar(value=bool(self.cfg.get('trava_amp')))
+        self.trava_freq = tk.BooleanVar(value=bool(self.cfg.get('trava_freq')))
+        ttk.Checkbutton(opc, text='Travar amplitude', variable=self.trava_amp).pack(side='left')
+        ttk.Checkbutton(opc, text='Travar frequência',
+                        variable=self.trava_freq).pack(side='left', padx=8)
+        self.bt_marcas = ttk.Button(opc, command=self._limpa_marcas)
+        self.bt_marcas.pack(side='left')
+        ttk.Label(opc, text='clique = marca um ponto (clique nela remove)   |   '
+                            'arraste = ΔF, duplo clique limpa   |   legenda liga/desliga',
+                  foreground='gray').pack(side='right')
+        self._atualiza_marcas(salva=False)
         self.canvas.get_tk_widget().grid(row=1, column=0, sticky='nsew')
 
         cols = ('curva', 'freq', 'valor', 'limite', 'margem')
@@ -551,8 +720,20 @@ class App:
         if not d:
             return
         d = os.path.normpath(d)
+        # layout novo: aceita a pasta das medidas, a do ensaio ou Traces/Imagens
+        base = d
+        if os.path.basename(d).lower() in ('traces', 'imagens'):
+            base = os.path.dirname(os.path.dirname(d))
+        elif os.path.basename(d) in ENSAIOS:
+            base = os.path.dirname(d)
+        novos = an.medidas_novas(base)
         grupos = an.grupos_conduzida(d)
-        if grupos:
+        if novos:
+            itens = sorted(novos, key=lambda m: (m['tipo'] != 'Radiada', m['data'], m['hora']),
+                           reverse=False)
+            for m in itens:
+                m['nome'] = '{} {} {}  {}'.format(m['tipo'][:3], m['data'], m['hora'], m['nome'])
+        elif grupos:
             itens = [dict(tipo='Conduzida', data='', hora='', pasta=d, chave=k,
                           nome='{} - {}'.format(*k)) for k in sorted(grupos)]
         else:
@@ -568,11 +749,30 @@ class App:
         m = self.medidas.get(sel[0]) if sel else None
         if m is None:
             return
+        # escala que esta na tela, para repetir no proximo grafico se travada
+        xlim = ylim = None
+        if self.fig.axes and self.medida_atual is not None:
+            if self.trava_freq.get():
+                xlim = self.fig.axes[0].get_xlim()
+            if self.trava_amp.get():
+                ylim = self.fig.axes[0].get_ylim()
         try:
-            tabela = an.plota(self.fig, m)
+            tabela = an.plota(self.fig, m, self.marcas, self._atualiza_marcas)
         except Exception as e:
             messagebox.showerror(APP, 'Não foi possível plotar {}:\n{}'.format(m['nome'], e))
             return
+        # o "Home" da barra volta para a escala cheia; a travada entra depois
+        ax = self.fig.axes[0]
+        self.toolbar.update()
+        self.toolbar.push_current()
+        x0, x1 = ax.get_xlim()
+        if xlim and xlim[0] < x1 and xlim[1] > x0:      # so se a faixa existe aqui
+            ax.set_xlim(xlim)
+        if ylim:
+            ax.set_ylim(ylim)
+        if xlim or ylim:
+            self.toolbar.push_current()
+            self.canvas.draw_idle()
         self.medida_atual = m
         self.tab.delete(*self.tab.get_children())
         for curva, fq, v, lim, mg in tabela:
@@ -586,17 +786,118 @@ class App:
             else 'Nenhum pico a menos de {:g} dB do limite (ou medida sem limite).'.format(
                 an.JANELA_DB)))
 
+    def _atualiza_marcas(self, salva=True):
+        """Depois de marcar/desmarcar um ponto: contador no botao e config."""
+        n = len(self.marcas)
+        self.bt_marcas.config(text='Limpar marcas ({})'.format(n) if n else 'Limpar marcas',
+                              state='normal' if n else 'disabled')
+        if salva:
+            self.cfg['marcas'] = self.marcas
+            save_config(self.cfg)
+
+    def _limpa_marcas(self):
+        del self.marcas[:]
+        redesenha = getattr(self.fig, '_emissao_marcas', None)
+        if redesenha and self.fig.axes:
+            redesenha()
+            self.canvas.draw_idle()
+        self._atualiza_marcas()
+
+    @staticmethod
+    def _nome_png(m):
+        """'Radiada - V - 48 (full band) - 2026-11-16 12h45.png': o que a arvore
+        mostra, com a data e a hora no fim."""
+        partes = [m['tipo'], m['nome'],
+                  ' '.join(x for x in (m['data'], m['hora'].replace(':', 'h')) if x)]
+        nome = ' - '.join(x for x in partes if x) + '.png'
+        return ''.join('_' if c in '\\/:*?"<>|' else c for c in nome)
+
     def _salva_png(self):
         m = self.medida_atual
         if m is None:
             return
-        nome = '{} {} {} {}.png'.format(m['tipo'], m['data'], m['hora'].replace(':', 'h'),
-                                        m['nome']).replace('  ', ' ')
         path = filedialog.asksaveasfilename(
-            title='Salvar gráfico', initialdir=m['pasta'], initialfile=nome,
-            defaultextension='.png', filetypes=[('PNG', '*.png')])
+            title='Salvar gráfico', initialdir=self.cfg.get('pasta_png') or m['pasta'],
+            initialfile=self._nome_png(m), defaultextension='.png',
+            filetypes=[('PNG', '*.png')])
         if path:
             self.fig.savefig(path, dpi=150, facecolor=self.fig.get_facecolor())
+
+    def _folhas(self, iid):
+        """Medidas do ramo *iid* da arvore (a propria, se for uma medida)."""
+        if iid in self.medidas:
+            return [self.medidas[iid]]
+        return [m for filho in self.arv.get_children(iid) for m in self._folhas(filho)]
+
+    def _salva_todos(self):
+        """Exporta os graficos do ramo selecionado para uma pasta so.
+
+        Todos saem com a escala que esta na tela e com as marcas, no tamanho
+        do grafico da janela. A frequencia da tela so e usada nas medidas que
+        tem essa faixa (como na trava de frequencia).
+        """
+        sel = self.arv.selection()
+        alvos = self._folhas(sel[0]) if sel else []
+        if not alvos:
+            messagebox.showinfo(APP, 'Selecione na árvore o ramo a exportar: um ensaio, '
+                                     'uma data, uma execução (hora) ou uma medida.')
+            return
+        xlim = ylim = None
+        if self.fig.axes and self.medida_atual is not None:
+            xlim, ylim = self.fig.axes[0].get_xlim(), self.fig.axes[0].get_ylim()
+        ramo = ' > '.join(reversed([self.arv.item(i, 'text') for i in self._caminho(sel[0])]))
+        pasta = filedialog.askdirectory(
+            title='Pasta para os {} gráfico(s) de "{}"'.format(len(alvos), ramo),
+            initialdir=self.cfg.get('pasta_png') or self.raiz.get())
+        if not pasta:
+            return
+        pasta = os.path.normpath(pasta)
+        existem = [m for m in alvos if os.path.exists(os.path.join(pasta, self._nome_png(m)))]
+        if existem and not messagebox.askyesno(
+                APP, '{} de {} arquivo(s) já existem em\n{}\n\nSubstituir?'.format(
+                    len(existem), len(alvos), pasta), icon='warning'):
+            return
+        self.cfg['pasta_png'] = pasta
+        save_config(self.cfg)
+
+        fig = Figure(figsize=self.fig.get_size_inches(), dpi=100, facecolor=an.BG)
+        FigureCanvasAgg(fig)
+        erros = []
+        self.root.config(cursor='watch')
+        try:
+            for k, m in enumerate(alvos):
+                self.lb_tab.config(text='Salvando {}/{}: {}'.format(k + 1, len(alvos),
+                                                                   self._nome_png(m)))
+                self.root.update_idletasks()
+                try:
+                    an.plota(fig, m, list(self.marcas))
+                    ax = fig.axes[0]
+                    x0, x1 = ax.get_xlim()
+                    if xlim and xlim[0] < x1 and xlim[1] > x0:
+                        ax.set_xlim(xlim)
+                    if ylim:
+                        ax.set_ylim(ylim)
+                    fig.savefig(os.path.join(pasta, self._nome_png(m)), dpi=150,
+                                facecolor=fig.get_facecolor())
+                except Exception as e:
+                    erros.append('{}: {}'.format(self._nome_png(m), e))
+        finally:
+            self.root.config(cursor='')
+        ok = len(alvos) - len(erros)
+        self.lb_tab.config(text='{} gráfico(s) salvos em {}'.format(ok, pasta))
+        if erros:
+            messagebox.showwarning(APP, '{} gráfico(s) salvos em\n{}\n\nNão saíram:\n{}'.format(
+                ok, pasta, '\n'.join(erros[:10])))
+        else:
+            messagebox.showinfo(APP, '{} gráfico(s) salvos em\n{}'.format(ok, pasta))
+
+    def _caminho(self, iid):
+        """iids de *iid* ate a raiz da arvore."""
+        cam = []
+        while iid:
+            cam.append(iid)
+            iid = self.arv.parent(iid)
+        return cam
 
     # ------------------------------------------------------------------
     # Fila da thread de captura
@@ -611,9 +912,10 @@ class App:
                     i, n = dado
                     self.pb['value'] = 100.0 * i / n if n else 0
                 elif tipo == 'prompt':
-                    self._log('\n>>> ' + dado)
+                    texto, pular = dado
+                    self._log('\n>>> ' + texto)
                     _beep([(800, 400)])
-                    self._mostra_aviso(dado)
+                    self._mostra_aviso(texto, pular)
                 elif tipo == 'confirma':
                     _beep([(800, 400)])
                     self.root.deiconify()

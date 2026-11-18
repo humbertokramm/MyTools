@@ -2,26 +2,29 @@
 emissao_captura.py  --  Sequencias de captura de emissao radiada e conduzida
 (N9010A), sem interface. Usado pelo emissao_gui.py.
 
-Mesma sequencia e mesmos nomes de arquivo dos scripts de console que
-vieram antes (radiada_capture.py e conduzida_capture.py, ja removidos; estao
-no historico do git), com estas diferencas:
-  - a conduzida tambem salva os traces em CSV e as limit lines, para
-    analise depois (antes era so o PNG da tela);
+Cada execucao passa por todas as combinacoes escolhidas (polarizacao da
+antena, slot da PSU e tensao, na ordem de troca que o operador define) e
+grava tudo em duas pastas unicas por ensaio: Imagens (PNG da tela do
+analisador) e Traces (CSV dos traces e dos limites). O nome do arquivo
+identifica a medida; ver "Cenarios e nomes de arquivo".
+
+Alem disso:
   - o rotulo de cada trace (Max, Med...) vem do tipo do trace no
     analisador, e nao de uma lista fixa;
   - da para abortar no meio de uma varredura;
-  - cada execucao grava numa subpasta com a hora (10h32), entao repetir
-    uma medida nao sobrescreve a anterior;
+  - na radiada o ambiente, sempre depois do EUT, pode ser medido em cada
+    combinacao, n vezes por polarizacao ou nao ser medido;
   - a conduzida sugere uma captura detalhada extra quando a faixa completa
     mostra pico perto do limite numa regiao sem zoom.
 
 Compativel com Python 3.8 (o exe roda no Windows 7).
 """
 
+import itertools
 import math
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Estados no disco do analisador, por ensaio e classe
 STATES = {
@@ -55,51 +58,146 @@ class Cancelado(Exception):
     """Operador abortou a sequencia."""
 
 
+# resposta do operador a um aviso que aceita pular a combinacao
+PULAR = 'pular'
+
+
 # -----------------------------------------------------------------------
-# Nomes de arquivo (identicos aos scripts originais)
+# Cenarios e nomes de arquivo
 # -----------------------------------------------------------------------
+# Tudo de um ensaio fica em duas pastas unicas, e o nome do arquivo diz o
+# resto:
+#   <raiz>\Radiada\Imagens\  PNG da tela do analisador (com a peak table)
+#   <raiz>\Radiada\Traces\   CSV de cada trace e o CSV do limite
+#   Radiada 48 VDC SL1 - Classe A - 30MHz-130MHz - H - (17-11 11h30) EUT.png
+#   Conduzida 48 VDC SL1 - Classe A - 150kHz-30MHz - (17-11 11h30) L1 - Max.csv
+# A hora e a do inicio da combinacao: o ambiente medido depois do EUT sai
+# com a mesma hora, e os dois ficam lado a lado na pasta. 'h' no lugar de
+# ':' porque o Windows nao aceita ':' em nome de arquivo.
+
+TENSOES_PADRAO = ['48 VDC', '127 VAC', '220 VAC']
+SLOTS_PADRAO = ['SL1', 'SL2']
+POLS = ['H', 'V']
+
+# o que muda entre uma combinacao e outra (a ordem e escolha do operador)
+DIMENSOES = {'Radiada': ['Polarização', 'Slot', 'Tensão'],
+             'Conduzida': ['Slot', 'Tensão']}
+
+# ambiente na radiada
+AMB_CADA = 'cada'        # depois do EUT, em cada combinacao (mesma hora no nome)
+AMB_POL = 'pol'          # n medicoes depois da ultima combinacao de cada polarizacao
+AMB_NAO = 'nao'
+
+
+def modo_ambiente(valor):
+    """Modo de ambiente de uma config salva ('inicio' era o AMB_POL)."""
+    return AMB_POL if valor == 'inicio' else valor
+
+_PROIBIDOS = '\\/:*?"<>|'
+
+
+def limpa_nome(texto):
+    """Texto digitado pronto para ir no nome do arquivo."""
+    t = ''.join(' ' if c in _PROIBIDOS else c for c in texto)
+    return ' '.join(t.replace(' - ', ' ').split())
+
 
 def faixa_str(freq_ini, freq_fim):
-    """'150kHz-30MHz', como nos nomes de arquivo da conduzida."""
+    """'150kHz-30MHz' / '30MHz-130MHz'."""
     def _fmt(hz):
         if hz >= 1e6 and hz % 1e6 == 0:
             return '{:.0f}MHz'.format(hz / 1e6)
+        if hz >= 1e6:
+            return '{:g}MHz'.format(hz / 1e6)
         if hz >= 1e3:
-            return '{:.0f}kHz'.format(hz / 1e3)
+            return '{:g}kHz'.format(hz / 1e3)
         return '{:.0f}Hz'.format(hz)
     return '{}-{}'.format(_fmt(freq_ini), _fmt(freq_fim))
 
 
-def nome_radiada(local, pol, classe, tensao, freq_ini, freq_fim, rotulo=''):
-    faixa = '{:.0f}MHz-{:.0f}MHz'.format(freq_ini / 1e6, freq_fim / 1e6)
-    suf = ' - ' + rotulo if rotulo else ''
-    if local == 'EUT':
-        return '{} Radiada - {} - EUT - Classe {} {}V{}'.format(
-            faixa, pol, classe, tensao, suf)
-    return '{} Radiada - {} - Ambiente - Classe {}{}'.format(faixa, pol, classe, suf)
+def carimbo(quando=None):
+    """'(17-11 11h30)'."""
+    return (quando or datetime.now()).strftime('(%d-%m %Hh%M)')
 
 
-def nome_conduzida(linha, tensao, freq_ini, freq_fim, rotulo=''):
-    base = '{}_{}_{}'.format(linha, tensao, faixa_str(freq_ini, freq_fim))
+class Relogio:
+    """Hora de cada medida de uma execucao, sempre num minuto novo.
+
+    O nome do arquivo so tem hora e minuto: duas medidas iguais no mesmo
+    minuto (ex.: as n medicoes de ambiente seguidas) teriam o mesmo nome.
+    Quando isso aconteceria, a hora avanca para o minuto seguinte.
+    """
+
+    def __init__(self):
+        self.ultimo = None
+
+    def agora(self):
+        q = datetime.now().replace(second=0, microsecond=0)
+        if self.ultimo is not None and q <= self.ultimo:
+            q = self.ultimo + timedelta(minutes=1)
+        self.ultimo = q
+        return q
+
+
+def cenario(tensao, slot):
+    """'48 VDC SL1' (vazio no ambiente medido a parte)."""
+    return ' '.join(x for x in (tensao, slot) if x)
+
+
+def nome_radiada(tensao, slot, classe, f0, f1, pol, quando, origem, rotulo=''):
+    cen = cenario(tensao, slot)
+    base = 'Radiada{} - Classe {} - {} - {} - {} {}'.format(
+        ' ' + cen if cen else '', classe, faixa_str(f0, f1), pol, carimbo(quando), origem)
     return base + (' - ' + rotulo if rotulo else '')
 
 
-def _data_hora(quando=None):
-    """('2026-11-11', '10h32'). A hora vira subpasta: cada execucao fica na
-    sua, entao repetir uma medida nao sobrescreve a anterior. 'h' no lugar
-    de ':' porque o Windows nao aceita ':' em nome de pasta."""
-    quando = quando or datetime.now()
-    return quando.strftime('%Y-%m-%d'), quando.strftime('%Hh%M')
+def nome_conduzida(tensao, slot, classe, f0, f1, quando, linha, rotulo=''):
+    cen = cenario(tensao, slot)
+    base = 'Conduzida{} - Classe {} - {} - {} {}'.format(
+        ' ' + cen if cen else '', classe, faixa_str(f0, f1), carimbo(quando), linha)
+    return base + (' - ' + rotulo if rotulo else '')
 
 
-def pasta_radiada(raiz, pol, tensao, quando=None):
-    data, hora = _data_hora(quando)
-    return os.path.join(raiz, 'Radiada', data, pol, tensao, hora)
+def nome_limite(ensaio, classe, trace=None):
+    return '{} - Limite - Classe {}{}.csv'.format(ensaio, classe,
+                                                  ' - ' + trace if trace else '')
 
 
-def pasta_conduzida(raiz, quando=None):
-    data, hora = _data_hora(quando)
-    return os.path.join(raiz, 'Conduzida', data, hora)
+def pastas(raiz, ensaio):
+    """(Imagens, Traces) do ensaio, criadas se preciso."""
+    img = os.path.join(raiz, ensaio, 'Imagens')
+    tr = os.path.join(raiz, ensaio, 'Traces')
+    for p in (img, tr):
+        os.makedirs(p, exist_ok=True)
+    return img, tr
+
+
+def combinacoes(ordem, valores):
+    """Combinacoes na ordem de troca escolhida.
+
+    ordem: dimensoes da que troca menos (primeira) a que troca a cada
+    combinacao (ultima). valores: {dimensao: [valores]}; lista vazia vira
+    [''] (ex.: equipamento sem slot).
+    """
+    listas = [valores.get(d) or [''] for d in ordem]
+    return [dict(zip(ordem, c)) for c in itertools.product(*listas)]
+
+
+def _avisa_puladas(op, puladas):
+    if puladas:
+        op.log('\nCombinacoes puladas ({}):\n'.format(len(puladas)) +
+               '\n'.join('  ' + p for p in puladas))
+
+
+def _descreve(c, anterior):
+    """Texto do aviso ao operador: o que trocar e como deve ficar."""
+    partes = {'Polarização': 'antena {}', 'Slot': 'PSU no {}', 'Tensão': '{}'}
+    agora = ', '.join(partes[d].format(v) for d, v in c.items() if v)
+    if anterior is None:
+        return 'Configure: ' + agora
+    troca = [partes[d].format(v) for d, v in c.items() if v and anterior.get(d) != v]
+    return ('TROQUE: ' + ', '.join(troca) + '   (fica: ' + agora + ')') if troca \
+        else 'Mesma configuração: ' + agora
 
 
 # -----------------------------------------------------------------------
@@ -177,7 +275,10 @@ def varrer(sa, n, cancelado, timeout=1800):
 class Operador:
     """Interface com quem esta rodando. A GUI implementa; o padrao e console.
 
-    prompt(texto)      espera o operador (EUT ligado, trocar a linha...)
+    prompt(texto, pular=False)
+                       espera o operador (EUT ligado, trocar a linha...);
+                       com pular=True ele pode responder PULAR, e a
+                       combinacao fica sem medir
     confirma(texto)    pergunta de sim/nao: True/False/None (None = abortar)
     log(texto)
     progresso(i, n)
@@ -185,8 +286,12 @@ class Operador:
     alerta() / ok()    avisos sonoros antes e depois de cada varredura
     """
 
-    def prompt(self, texto):
-        input(texto + '  [ENTER]')
+    def prompt(self, texto, pular=False):
+        if not pular:
+            input(texto + '  [ENTER]')
+            return None
+        r = input(texto + '  [ENTER, ou P para pular a combinacao]')
+        return PULAR if r.strip().lower() == 'p' else None
 
     def confirma(self, texto):
         return input(texto + ' (s/N) ').strip().lower() == 's'
@@ -222,14 +327,16 @@ def _pode_gravar(op, caminhos):
     return r
 
 
-def _captura(sa, op, n, pasta, nomes, traces, peak_table):
-    """Varre e salva um CSV por trace + o PNG. nomes(rotulo) -> nome base.
+def _captura(sa, op, n, pastas_saida, nomes, traces, peak_table):
+    """Varre e salva um CSV por trace (Traces) + o PNG da tela (Imagens).
 
-    Retorna [(trace, rotulo, csv)], ou [] se o operador pulou a captura.
+    nomes(rotulo) -> nome base. Retorna [(trace, rotulo, csv)], ou [] se o
+    operador pulou a captura.
     """
+    img, tr = pastas_saida
     rotulos = [(t, rotulo_trace(sa, t)) for t in traces]
-    csvs = [os.path.join(pasta, nomes(r) + '.csv') for _, r in rotulos]
-    png = os.path.join(pasta, nomes('') + '.png')
+    csvs = [os.path.join(tr, nomes(r) + '.csv') for _, r in rotulos]
+    png = os.path.join(img, nomes('') + '.png')
     if not _pode_gravar(op, csvs + [png]):
         op.log('  pulado (arquivos mantidos)')
         return []
@@ -240,73 +347,153 @@ def _captura(sa, op, n, pasta, nomes, traces, peak_table):
         op.log('  AVISO: timeout na varredura!')
     sa.pause()
 
-    for (tr, _), path in zip(rotulos, csvs):
-        sa.driver.export_csv(tr, path)
+    for (t, _), path in zip(rotulos, csvs):
+        sa.driver.export_csv(t, path)
 
     sa.set_fullscreen(True)       # o load_state pode ter tirado o full screen
     if peak_table:
         sa.set_peak_table(True)
-    img = sa.driver.capture_screen()
+    imagem = sa.driver.capture_screen()
     if peak_table:
         sa.set_peak_table(False)
     with open(png, 'wb') as fh:
-        fh.write(img)
-    op.log('  PNG: ' + os.path.basename(png))
+        fh.write(imagem)
+    op.log('  ' + os.path.basename(png))
     op.ok()
     return [(t, r, path) for (t, r), path in zip(rotulos, csvs)]
 
 
-def radiada(sa, op, raiz, classe, pol, tensao, n, bandas=None,
-            traces=('Trace1', 'Trace2'), state=None):
-    """Sequencia da radiada. Retorna a pasta da medida."""
-    bandas = list(bandas or BANDAS['Radiada'])
-    state = state or STATES['Radiada'][classe]
-    pasta = pasta_radiada(raiz, pol, tensao)
-    os.makedirs(os.path.join(pasta, 'full_band'), exist_ok=True)
-    op.log('Pasta de saida: ' + pasta)
+def _salva_limites(sa, op, tr, ensaio, classe, por_trace):
+    """Limit lines do state em Traces. Retorna {trace: (freq, amp)}."""
+    limites = {}
+    lls = limit_lines(sa)
+    if not lls:
+        op.log('  AVISO: nenhuma limit line habilitada no state!')
+    for _, t, fq, amp in (lls if por_trace else lls[:1]):
+        nome = nome_limite(ensaio, classe, t if por_trace else None)
+        salva_limite(os.path.join(tr, nome), fq, amp)
+        limites[t if por_trace else None] = (fq, amp)
+        op.log('  Limite salvo: ' + nome)
+    return limites
 
-    # bandas divididas e, por ultimo, a banda completa (em full_band)
+
+def etapas_radiada(bandas):
+    """Sub-bandas e, por ultimo, a banda completa (se houver mais de uma)."""
+    bandas = [tuple(b) for b in bandas]
     full = (min(b[0] for b in bandas), max(b[1] for b in bandas))
-    etapas = []           # (local, f0, f1, is_full, primeira_do_local)
-    for local in ('EUT', 'Ambiente'):
-        for j, b in enumerate(bandas):
-            etapas.append((local, b[0], b[1], False, j == 0))
-        etapas.append((local, full[0], full[1], True, False))
-    limite_salvo = False
+    return bandas + ([full] if len(bandas) > 1 and full not in bandas else [])
+
+
+def plano_radiada(combos, pols, etapas, amb_modo, amb_n):
+    """Numero de capturas da execucao (para a barra de progresso)."""
+    por_vez = len(etapas)
+    eut = len(combos) * por_vez
+    if amb_modo == AMB_CADA:
+        return 2 * eut
+    if amb_modo == AMB_POL:
+        npol = len({c.get('Polarização', '') for c in combos})
+        return eut + npol * amb_n * por_vez
+    return eut
+
+
+def radiada(sa, op, raiz, classe, n, tensoes, slots, pols, ordem,
+            amb_modo=AMB_CADA, amb_n=1, bandas=None, traces=('Trace1', 'Trace2'),
+            state=None):
+    """Radiada em todas as combinacoes de polarizacao, slot e tensao.
+
+    *ordem* diz o que troca menos (primeiro) e o que troca a cada
+    combinacao (ultimo). O ambiente e sempre medido DEPOIS do EUT:
+      AMB_CADA    em cada combinacao: EUT e, desligado o EUT, o ambiente,
+                  com a mesma hora no nome;
+      AMB_POL     amb_n medicoes depois da ultima combinacao de cada
+                  polarizacao (pega raias esporadicas sem refazer o boot
+                  do EUT a cada combinacao);
+      AMB_NAO     so o EUT.
+    Retorna a pasta Traces.
+    """
+    etapas = etapas_radiada(bandas or BANDAS['Radiada'])
+    state = state or STATES['Radiada'][classe]
+    saida = pastas(raiz, 'Radiada')
+    op.log('Imagens: {}\nTraces:  {}'.format(*saida))
+    combos = combinacoes(ordem, {'Polarização': pols, 'Slot': slots, 'Tensão': tensoes})
+    total = plano_radiada(combos, pols, etapas, amb_modo, amb_n)
+    estado = dict(feitas=0, limite=False)
+    relogio = Relogio()
     sa.set_fullscreen(True)
 
-    for i, (local, f0, f1, is_full, primeira) in enumerate(etapas):
+    def mede(origem, pol, tensao, slot, quando):
+        for f0, f1 in etapas:
+            if op.cancelado():
+                raise Cancelado()
+            op.progresso(estado['feitas'], total)
+            op.log('\n[{}/{}] {} {} {} {}'.format(
+                estado['feitas'] + 1, total, origem, pol, cenario(tensao, slot) or '',
+                faixa_str(f0, f1)).replace('  ', ' '))
+            sa.load_state(state)
+            sa.set_freq_range(f0, f1)
+            if not estado['limite']:
+                _salva_limites(sa, op, saida[1], 'Radiada', classe, por_trace=False)
+                estado['limite'] = True
+            _captura(sa, op, n, saida,
+                     lambda r, f0=f0, f1=f1: nome_radiada(tensao, slot, classe, f0, f1,
+                                                          pol, quando, origem, r),
+                     traces, peak_table=True)
+            estado['feitas'] += 1
+
+    anterior = None
+    puladas = []
+    # AMB_POL: o ambiente de uma polarizacao sai depois da ultima combinacao
+    # com ela (a antena ainda esta nessa polarizacao)
+    ultima = {c.get('Polarização', ''): i for i, c in enumerate(combos)}
+    medidas_pol = {}           # pol -> combinacoes medidas (EUT)
+    eut_desligado = False      # depois do ambiente, o EUT precisa de boot
+
+    def pula(pol, tensao, slot, oque, capturas):
+        desc = '{} {} ({})'.format(pol, cenario(tensao, slot), oque)
+        puladas.append(desc)
+        op.log('  PULADA: ' + desc)
+        estado['feitas'] += capturas
+
+    for i, c in enumerate(combos):
         if op.cancelado():
             raise Cancelado()
-        if primeira:
-            op.prompt('EUT ligado, antena na polarizacao ' + pol if local == 'EUT'
-                      else 'Desligue o EUT (medida de ambiente)')
-        destino = os.path.join(pasta, 'full_band') if is_full else pasta
-        op.progresso(i, len(etapas))
-        op.log('\n[{}/{}] {} {:.0f}-{:.0f} MHz{}'.format(
-            i + 1, len(etapas), local, f0 / 1e6, f1 / 1e6, '  (FULL BAND)' if is_full else ''))
+        pol, slot, tensao = c.get('Polarização', ''), c.get('Slot', ''), c.get('Tensão', '')
+        texto = _descreve(c, anterior)
+        anterior = c
+        if amb_modo == AMB_CADA or eut_desligado:
+            pronto = '\nLigue o EUT e espere o boot terminar'
+        else:
+            pronto = '\nEUT ligado e pronto'
+        if op.prompt(texto + pronto, pular=True) == PULAR:
+            pula(pol, tensao, slot, 'EUT e ambiente' if amb_modo == AMB_CADA else 'EUT',
+                 (2 if amb_modo == AMB_CADA else 1) * len(etapas))
+        else:
+            eut_desligado = False
+            quando = relogio.agora()
+            mede('EUT', pol, tensao, slot, quando)
+            medidas_pol[pol] = medidas_pol.get(pol, 0) + 1
+            if amb_modo == AMB_CADA:
+                if op.prompt('DESLIGUE o EUT: medida de ambiente  ({}, {})'.format(
+                        pol, cenario(tensao, slot)), pular=True) == PULAR:
+                    pula(pol, tensao, slot, 'ambiente; o EUT foi medido', len(etapas))
+                else:
+                    mede('Ambiente', pol, tensao, slot, quando)
+        if amb_modo == AMB_POL and ultima[pol] == i:
+            if not medidas_pol.get(pol):
+                op.log('  Ambiente {} não medido: nenhuma combinação {} foi medida'.format(
+                    pol, pol))
+                estado['feitas'] += amb_n * len(etapas)
+                continue
+            op.prompt('DESLIGUE o EUT: ambiente com a antena {} ({} medição(ões))'.format(
+                pol, amb_n))
+            eut_desligado = True
+            for k in range(amb_n):
+                op.log('\n--- Ambiente {} {}/{}'.format(pol, k + 1, amb_n))
+                mede('Ambiente', pol, '', '', relogio.agora())
 
-        sa.load_state(state)
-        sa.set_freq_range(f0, f1)
-
-        if not limite_salvo:
-            # so o primeiro limite, com o nome que o radiada_plot procura
-            lim = limit_lines(sa)
-            if lim:
-                salva_limite(os.path.join(pasta, 'Radiada - Limite - Classe ' + classe + '.csv'),
-                             lim[0][2], lim[0][3])
-                op.log('  Limite salvo')
-            else:
-                op.log('  AVISO: nenhuma limit line habilitada no state!')
-            limite_salvo = True
-
-        _captura(sa, op, n, destino,
-                 lambda r, local=local, f0=f0, f1=f1: nome_radiada(
-                     local, pol, classe, tensao, f0, f1, r),
-                 traces, peak_table=True)
-
-    op.progresso(len(etapas), len(etapas))
-    return pasta
+    _avisa_puladas(op, puladas)
+    op.progresso(1, 1)
+    return saida[1]
 
 
 # Regioes em que a conduzida ganha uma captura com mais detalhe quando a
@@ -361,20 +548,21 @@ def piores_por_segmento(capturas, limites, segmentos=SEGMENTOS_ZOOM):
     return piores
 
 
-def conduzida(sa, op, raiz, classe, tensoes, n, bandas=None,
+def conduzida(sa, op, raiz, classe, n, tensoes, slots, ordem, bandas=None,
               traces=('Trace1', 'Trace2'), state=None, linhas=('L1', 'L2')):
-    """Sequencia da conduzida: imagem, traces em CSV e limites.
+    """Conduzida em todas as combinacoes de slot e tensao, L1 e L2 em cada.
 
     Depois da faixa mais larga de cada linha, olha os traces contra os
     limites: se houver pico perto do limite numa regiao sem captura
     detalhada, pergunta ao operador se quer captura-la tambem. A resposta
-    vale para o resto da execucao (as outras linhas e tensoes).
+    vale para o resto da execucao (as outras linhas e combinacoes).
+    Retorna a pasta Traces.
     """
     bandas = [tuple(b) for b in (bandas or BANDAS['Conduzida'])]
     state = state or STATES['Conduzida'][classe]
-    pasta = pasta_conduzida(raiz)
-    os.makedirs(pasta, exist_ok=True)
-    op.log('Pasta de saida: ' + pasta)
+    saida = pastas(raiz, 'Conduzida')
+    op.log('Imagens: {}\nTraces:  {}'.format(*saida))
+    combos = combinacoes(ordem, {'Slot': slots, 'Tensão': tensoes})
 
     larga = max(bandas, key=lambda b: b[1] - b[0])
     extras = []           # zooms que o operador aceitou
@@ -383,40 +571,51 @@ def conduzida(sa, op, raiz, classe, tensoes, n, bandas=None,
     feitas = 0
 
     def total():
-        return len(tensoes) * len(linhas) * (len(bandas) + len(extras))
+        return len(combos) * len(linhas) * (len(bandas) + len(extras))
 
     def coberta(seg):
         return any(b != larga and b[0] <= seg[0] and b[1] >= seg[1]
                    for b in bandas + extras)
 
-    for tensao in tensoes:
-        for linha in linhas:
+    anterior = None
+    relogio = Relogio()
+    puladas = []
+    for c in combos:
+        slot, tensao = c.get('Slot', ''), c.get('Tensão', '')
+        cen = cenario(tensao, slot)
+        texto = _descreve(c, anterior)
+        anterior = c
+        quando = None
+        for k, linha in enumerate(linhas):
             if op.cancelado():
                 raise Cancelado()
-            op.prompt('Tensao {}: conecte a LISN ao condutor {}'.format(tensao, linha))
+            if op.prompt((texto + '\n' if k == 0 else '') +
+                         'EUT ligado; LISN no condutor {}'.format(linha),
+                         pular=True) == PULAR:
+                resto = linhas[k:]
+                desc = '{} ({})'.format(cen, ', '.join(resto))
+                puladas.append(desc)
+                op.log('  PULADA: ' + desc)
+                feitas += len(resto) * (len(bandas) + len(extras))
+                break
+            quando = quando or relogio.agora()     # L1 e L2 com a mesma hora
             fila = bandas + extras
             while fila:
                 if op.cancelado():
                     raise Cancelado()
                 f0, f1 = fila.pop(0)
                 op.progresso(feitas, total())
-                op.log('\n[{}/{}] {} {} {}'.format(feitas + 1, total(), tensao, linha,
+                op.log('\n[{}/{}] {} {} {}'.format(feitas + 1, total(), cen, linha,
                                                    faixa_str(f0, f1)))
                 sa.load_state(state)
                 sa.set_freq_range(f0, f1)
-
                 if limites is None:
-                    limites = {}
-                    for _, tr, fq, amp in limit_lines(sa):
-                        nome = 'Conduzida - Limite - Classe {}{}.csv'.format(
-                            classe, ' - ' + tr if tr else '')
-                        salva_limite(os.path.join(pasta, nome), fq, amp)
-                        limites[tr] = (fq, amp)
-                        op.log('  Limite salvo: ' + nome)
+                    limites = _salva_limites(sa, op, saida[1], 'Conduzida', classe,
+                                             por_trace=True)
 
-                capt = _captura(sa, op, n, pasta,
-                                lambda r, linha=linha, tensao=tensao, f0=f0, f1=f1:
-                                nome_conduzida(linha, tensao, f0, f1, r),
+                capt = _captura(sa, op, n, saida,
+                                lambda r, linha=linha, f0=f0, f1=f1: nome_conduzida(
+                                    tensao, slot, classe, f0, f1, quando, linha, r),
                                 traces, peak_table=False)
                 feitas += 1
 
@@ -431,8 +630,8 @@ def conduzida(sa, op, raiz, classe, tensoes, n, bandas=None,
                     r = op.confirma(
                         '{} em {}: pico {} em {:.3g} MHz ({}).\n\n'
                         'Capturar tambem a faixa {}, com mais detalhe?\n'
-                        'Vale para as proximas linhas e tensoes desta execucao.'.format(
-                            linha, tensao,
+                        'Vale para as proximas linhas e combinacoes desta execucao.'.format(
+                            linha, cen,
                             '{:.1f} dB ACIMA do limite'.format(margem) if margem > 0
                             else 'a {:.1f} dB do limite'.format(-margem),
                             fq / 1e6, rotulo, faixa_str(*seg)))
@@ -443,5 +642,6 @@ def conduzida(sa, op, raiz, classe, tensoes, n, bandas=None,
                         fila.append(seg)
                         op.log('  Faixa extra: ' + faixa_str(*seg))
 
+    _avisa_puladas(op, puladas)
     op.progresso(1, 1)
-    return pasta
+    return saida[1]
