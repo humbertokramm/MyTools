@@ -6,7 +6,8 @@ import threading
 import tkinter as tk
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 import subprocess
-from intranetVersionChecker import check_update, update_local, check_fpga_update, update_fpga_local
+from intranetVersionChecker import (check_update, update_local, check_fpga_update,
+                                    update_fpga_local, buildator_raiz, baixa_buildator)
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "http_server_config.json")
 
@@ -443,6 +444,60 @@ def start_gui(servidor, cenario_ini=None, porta_ini=None):
     # botões firmware
     tk.Button(frame, text="Verificar versão", command=verificar_versao).pack(pady=2)
     tk.Button(frame, text="Atualizar", command=atualizar).pack(pady=2)
+
+    # ---------------- buildator (build temporaria) ----------------
+    tk.Frame(frame, height=1, bg="gray").pack(fill="x", pady=8)
+    tk.Label(frame, text="Buildator", font=("", 9, "bold")).pack()
+
+    build_var = tk.StringVar(value=cfg.get("buildator", ""))
+    linha_build = tk.Frame(frame)
+    linha_build.pack(pady=3)
+    tk.Label(linha_build, text="Link ou nº da build:").pack(side="left")
+    build_entry = tk.Entry(linha_build, textvariable=build_var, width=44)
+    build_entry.pack(side="left", padx=4)
+    bt_build = tk.Button(linha_build, text="Baixar")
+    bt_build.pack(side="left")
+
+    status_build = tk.Label(frame, text="Cole o link da build (ou so o numero)",
+                            fg="gray")
+    status_build.pack(pady=3)
+
+    def baixar_buildator():
+        texto = build_var.get().strip()
+        try:
+            raiz, numero = buildator_raiz(texto)
+        except ValueError as e:
+            status_build.config(text=str(e), fg="red")
+            return
+        cfg["buildator"] = texto
+        save_config(cfg)
+        bt_build.config(state="disabled")
+        status_build.config(text=f"Build {numero}: procurando a imagem...", fg="black")
+
+        def mostra(texto, cor="black"):
+            root.after(0, lambda: status_build.config(text=texto, fg=cor))
+
+        def progresso(feito, total):
+            mb = feito / 2**20
+            if total:
+                mostra(f"Build {numero}: {mb:.0f} de {total / 2**20:.0f} MB")
+            else:
+                mostra(f"Build {numero}: {mb:.0f} MB")
+
+        def task():
+            try:
+                nome = baixa_buildator(texto, ".", progresso)
+                mostra(f"Baixado: {nome}", "green")
+                root.after(0, atualizar_lista)
+            except Exception as e:
+                mostra(f"Build {numero}: erro: {e}", "red")
+            finally:
+                root.after(0, lambda: bt_build.config(state="normal"))
+
+        threading.Thread(target=task, daemon=True).start()
+
+    bt_build.config(command=baixar_buildator)
+    build_entry.bind("<Return>", lambda e: baixar_buildator())
 
     # ---------------- separador ----------------
     tk.Frame(frame, height=1, bg="gray").pack(fill="x", pady=8)

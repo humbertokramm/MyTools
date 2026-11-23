@@ -294,7 +294,9 @@ def get_local_bins(path=".", projeto=None):
     if projeto:
         arquivos = [f for f in arquivos if f"pd{projeto}" in f]
 
-    return arquivos
+    # as imagens do buildator nao sao versoes do nightly: nao entram na
+    # comparacao nem sao apagadas pelo Atualizar
+    return [f for f in arquivos if not f.startswith(BUILDATOR_PREFIXO)]
 
 
 # -------------------------------
@@ -361,6 +363,85 @@ def update_local(tipo, projeto, path="."):
 
     _set_latest_bin(nome, path)
     return True
+
+
+# -------------------------------
+# buildator (build temporaria, pelo link)
+# -------------------------------
+# Cada build tem uma pasta propria, identificada so pelo numero:
+#   https://buildator.ped.datacom.net.br/+buildator_dmos+dmos-buildroot-8777/
+#       images/pd4301_ft-onie-installer-14.2.0-047-1-g2be6a5d7dd.bin
+# Nao da para achar pelo projeto (pode haver varias builds do mesmo), entao
+# o usuario informa o link -- ou so o numero, quando o job e o dmos-buildroot.
+BUILDATOR = "https://buildator.ped.datacom.net.br"
+BUILDATOR_JOB = "+buildator_dmos+dmos-buildroot-"
+BUILDATOR_PREFIXO = "buildator"
+
+
+def buildator_raiz(texto):
+    """(URL da pasta da build, numero) a partir do link ou do numero.
+
+    Aceita o link de qualquer pagina dentro da build (a raiz, images/...).
+    """
+    texto = texto.strip()
+    if re.fullmatch(r"\d+", texto):
+        return f"{BUILDATOR}/{BUILDATOR_JOB}{texto}/", texto
+    u = urllib.parse.urlparse(texto if "://" in texto else "https://" + texto)
+    if not u.netloc.lower().startswith("buildator."):
+        raise ValueError("O link deve ser do buildator.ped.datacom.net.br")
+    pasta = next((p for p in u.path.split("/") if p.startswith("+")), None)
+    m = re.search(r"-(\d+)$", pasta or "")
+    if not m:
+        raise ValueError("Nao achei o numero da build no link")
+    return f"{u.scheme}://{u.netloc}/{pasta}/", m.group(1)
+
+
+def buildator_imagem(raiz):
+    """Nome do instalador ONIE da build (o versionado, se houver)."""
+    context = ssl._create_unverified_context()
+    with urllib.request.urlopen(raiz + "images/", timeout=10, context=context) as r:
+        html = r.read().decode("utf-8", errors="replace")
+    bins = [urllib.parse.unquote(h) for h in re.findall(r'href="([^"/]+\.bin)"', html)]
+    versionados = [b for b in bins if "onie-installer" in b and b != "onie-installer.bin"]
+    if versionados:
+        return sorted(versionados)[-1]
+    if "onie-installer.bin" in bins:
+        return "onie-installer.bin"
+    raise ValueError("A build nao tem onie-installer .bin em images/")
+
+
+def baixa_buildator(texto, path=".", progresso=None):
+    """Baixa o instalador ONIE da build e devolve o nome local.
+
+    O arquivo fica como 'buildator8777_<nome original>.bin', para saber de
+    qual build veio. progresso(baixados, total) e chamado durante o download.
+    """
+    raiz, numero = buildator_raiz(texto)
+    nome = buildator_imagem(raiz)
+    local = f"{BUILDATOR_PREFIXO}{numero}_{nome}"
+    destino = os.path.join(path, local)
+    url = raiz + "images/" + urllib.parse.quote(nome)
+    context = ssl._create_unverified_context()
+    with urllib.request.urlopen(url, timeout=30, context=context) as r:
+        total = int(r.headers.get("Content-Length") or 0)
+        if os.path.exists(destino) and total and os.path.getsize(destino) == total:
+            return local                       # ja baixado
+        parcial = destino + ".part"
+        feito = 0
+        with open(parcial, "wb") as f:
+            while True:
+                bloco = r.read(1 << 20)
+                if not bloco:
+                    break
+                f.write(bloco)
+                feito += len(bloco)
+                if progresso:
+                    progresso(feito, total)
+    if total and feito != total:
+        os.remove(parcial)
+        raise IOError(f"Download incompleto ({feito} de {total} bytes)")
+    os.replace(parcial, destino)
+    return local
 
 
 # -------------------------------
