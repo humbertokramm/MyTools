@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import json
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -85,6 +86,26 @@ AVS_SENSOR_RE = re.compile(
     r'(?:[Vv]oltage\s+monitor|[Ss]ensor)\s+(\d+)\s*[:\-=]\s*([\d.]+)\s*V\b'
 )
 
+# BG-2665: carga do driver da FPGA no boot. Normal ~2 s; a falha durou 12 ms
+# e o servico deu OK mesmo assim, sem criar /dev/fpga-debug.
+FPGA_START_RE  = re.compile(r'Starting Load fpga-[\w-]+ module')
+FPGA_OK_RE     = re.compile(r'\[\s*OK\s*\]\s+Finished Load fpga-[\w-]+ module')
+FPGA_FAIL_RE   = re.compile(r'\[FAILED\].*Load fpga-[\w-]+ module')
+FPGA_ENOENT_RE = re.compile(r'Driver error \(No such file or directory\)')
+FPGA_GUARD_RE  = re.compile(r'BG-2665: FPGA AUSENTE')
+# Contador do proprio fpga-pd3450 (change 189093), impresso pelo rebootTF.lua a
+# cada boot: "BG-2665 Number of tries: N of M". Quando existe, vale mais que a
+# estimativa pela duracao. Imagem sem o change: "... sem contador ...".
+FPGA_TRIES_RE  = re.compile(r'BG-2665 Number of tries:\s*(\d+)\s+of\s+(\d+)')
+FPGA_MIN_S     = 1.0
+# Com o change 189093 (fpga-pd3450 espera o /dev/ttyACM0 em ate 20 x 1 s), cada
+# tentativa extra soma ~1 s ao servico. Normal ~2,0-2,1 s; 2,9 s ou mais = o
+# script esperou a USB da FPGA, ou seja, o boot que antes cairia no BG-2665.
+FPGA_WAIT_S    = 2.9
+FPGA_BASE_S    = 2.05
+PROJETO_RE     = re.compile(r'\]\s*Projeto:\s*(pd\w+)')
+RESUMO_SN_RE   = re.compile(r'\]\s*DUT\s*:.*\bSN\s+(\d+)')
+
 # BCM PLL lock status line
 # e.g. "CORE_PLL0_LOCK_STATUS = 1"
 BCM_PLL_RE = re.compile(r'(\w+PLL\w*(?:_LOCK(?:_STATUS)?)?)\s*=\s*([01])\b')
@@ -113,11 +134,64 @@ def analyze_boot(boot_lines):
     return ok_count, failures
 
 
+def fpga_load(boot_lines):
+    """Duracao (s) do servico 'Load fpga-* module' e se ele terminou em FAILED."""
+    t0 = dur = None
+    failed = False
+    for raw in boot_lines:
+        if t0 is None and FPGA_START_RE.search(raw):
+            t0 = parse_ts(raw)
+        elif FPGA_OK_RE.search(raw) and t0 is not None and dur is None:
+            t1 = parse_ts(raw)
+            if t1:
+                dur = (t1 - t0).total_seconds()
+        elif FPGA_FAIL_RE.search(raw):
+            failed = True
+    return dur, failed
+
+
+def fpga_anomalias(loop):
+    """Descricoes do BG-2665 neste loop (vazio = FPGA normal)."""
+    a = []
+    if loop.get('fpga_guard'):
+        t = loop.get('fpga_tries')
+        a.append('BG-2665: /dev/fpga-debug ausente, loop interrompido pela guarda'
+                 + (f' (tentativas {fmt_tries(t)})' if t else ''))
+    if loop.get('fpga_failed'):
+        a.append('BG-2665: servico da FPGA terminou em FAILED')
+    if loop.get('fpga_s') is not None and loop['fpga_s'] < FPGA_MIN_S:
+        a.append(f'BG-2665: driver da FPGA carregou em {loop["fpga_s"] * 1000:.0f} ms '
+                 f'(normal ~2 s)')
+    if loop.get('fpga_enoent'):
+        a.append(f'BG-2665: {loop["fpga_enoent"]} acessos a FPGA com ENOENT')
+    return a
+
+
+def fpga_espera_s(dur, anomalo, tries=None):
+    """Segundos extras esperando a USB da FPGA (None = nao esperou).
+
+    Com o contador do script (tries), a espera e exata: tries - 1. Sem ele
+    (imagem antiga, ou log sem a linha), estima pela duracao do servico.
+    """
+    if anomalo:
+        return None
+    if tries is not None:
+        return tries - 1 if tries > 1 else None
+    if dur is None or dur < FPGA_WAIT_S:
+        return None
+    return max(1, round(dur - FPGA_BASE_S))
+
+
+def fmt_tries(t):
+    return f'{t[0]} de {t[1]}' if t else '-'
+
+
 def compute_boot_stats(loops):
     for loop in loops:
         ok, fails = analyze_boot(loop.get('boot_lines', []))
         loop['boot_ok']       = ok
         loop['boot_failures'] = fails
+        loop['fpga_s'], loop['fpga_failed'] = fpga_load(loop.get('boot_lines', []))
 
     booted = [l for l in loops if l['boot_ok'] > 0]
     if not booted:
@@ -137,10 +211,12 @@ def compute_boot_stats(loops):
 
     for loop in loops:
         if loop['boot_ok'] == 0:
-            loop['boot_status']     = 'unknown'
-            loop['boot_unexpected'] = []
+            anom = fpga_anomalias(loop)
+            loop['boot_status']     = 'fail' if anom else 'unknown'
+            loop['boot_unexpected'] = anom
             continue
         unexpected = [f for f in loop['boot_failures'] if f not in expected]
+        unexpected += fpga_anomalias(loop)
         short_boot = loop['boot_ok'] < ref_ok * 0.6
         loop['boot_status']     = 'fail' if (unexpected or short_boot) else 'ok'
         loop['boot_unexpected'] = unexpected
@@ -245,6 +321,11 @@ def _new_loop_dict(device='unknown', prev=None):
         bcm143_duration_s = None,
         avs               = {},
         product           = None,
+        fpga_s            = None,
+        fpga_failed       = False,
+        fpga_enoent       = 0,
+        fpga_guard        = False,
+        fpga_tries        = None,
     )
     # Inherit static DUT info from previous loop (only set once at startup)
     if prev:
@@ -416,6 +497,28 @@ def parse_log(filepath):
         if 'Device Test Finished Correctly' in line and ts:
             cur['end_time'] = ts
             in_report = False
+
+        # ── BG-2665: acessos a FPGA sem o driver, e a guarda do rebootTF ───────
+        if FPGA_ENOENT_RE.search(line):
+            cur['fpga_enoent'] += 1
+        if FPGA_GUARD_RE.search(line):
+            cur['fpga_guard'] = True
+        if cur.get('fpga_tries') is None:
+            m = FPGA_TRIES_RE.search(line)
+            if m:
+                cur['fpga_tries'] = (int(m.group(1)), int(m.group(2)))
+
+        # ── Projeto (rebootTF) e SN do resumo do Infoboard ─────────────────────
+        # Sem verify nao ha o banner "# PDxxxx Tests! #", e o hostname da imagem
+        # de FT pode ser o da plataforma-mae (pd4301_ft num pd4302).
+        if not cur.get('product'):
+            m = PROJETO_RE.search(line)
+            if m:
+                cur['product'] = m.group(1).upper()
+        if cur['serial_number'] is None:
+            m = RESUMO_SN_RE.search(line)
+            if m:
+                cur['serial_number'] = m.group(1)
 
         # ── Serial / MAC ──────────────────────────────────────────────────────
         if cur['serial_number'] is None:
@@ -1248,13 +1351,62 @@ function copyDUT(btn) {{
 
 # ── Section builders ───────────────────────────────────────────────────────────
 
+def build_bg2665_card(loops):
+    """Card do BG-2665 (driver da FPGA nao carrega no boot). None sem dados."""
+    medidos = [(i + 1, l['fpga_s']) for i, l in enumerate(loops) if l.get('fpga_s') is not None]
+    ruins   = [i + 1 for i, l in enumerate(loops) if fpga_anomalias(l)]
+    if not medidos and not ruins:
+        return None
+    det = []
+    if medidos:
+        v = [d for _, d in medidos]
+        det.append(f'Carga do driver medida em {len(medidos)}/{len(loops)} boots: '
+                   f'{min(v):.3f} a {max(v):.3f} s (média {sum(v) / len(v):.3f} s)')
+    det.append(f'Abaixo de {FPGA_MIN_S:.0f} s: {sum(1 for _, d in medidos if d < FPGA_MIN_S)} | '
+               f'FAILED: {sum(1 for l in loops if l.get("fpga_failed"))} | '
+               f'com ENOENT: {sum(1 for l in loops if l.get("fpga_enoent"))} | '
+               f'guarda acionada: {sum(1 for l in loops if l.get("fpga_guard"))}')
+    esperas = [(i + 1, e, l) for i, l in enumerate(loops)
+               if (e := fpga_espera_s(l.get('fpga_s'), fpga_anomalias(l),
+                                      l['fpga_tries'][0] if l.get('fpga_tries') else None))
+               is not None]
+    n_cont = sum(1 for l in loops if l.get('fpga_tries'))
+    lim = f'{FPGA_WAIT_S:.1f}'.replace('.', ',')
+    if esperas:
+        det.append(f'Esperou a USB da FPGA (≥ {lim} s, correção do change 189093 atuou): '
+                   f'{len(esperas)} boot(s) - '
+                   + ', '.join(f'L{n} ' + (f'{fmt_tries(l["fpga_tries"])} tentativas'
+                                           if l.get('fpga_tries') else
+                                           f'{l["fpga_s"]:.1f} s (~{e} s)')
+                               for n, e, l in esperas))
+    else:
+        det.append(f'Esperou a USB da FPGA (≥ {lim} s): 0')
+    dist = Counter(l['fpga_tries'][0] for l in loops if l.get('fpga_tries'))
+    det.append(f'Contador do script (Number of tries) lido em {n_cont}/{len(loops)} boots'
+               + (': ' + ', '.join(f'{k} tentativa(s) = {v} boot(s)'
+                                   for k, v in sorted(dist.items())) if dist else ''))
+    titulo = '[DM4820-48VS] Driver da FPGA não carrega no boot'
+    if ruins:
+        return ('BG-2665', titulo, det + [f'Loops: {ruins}'], 'fail',
+                f'OCORREU em {len(ruins)} boot(s)')
+    if esperas:
+        return ('BG-2665', titulo, det, 'ok',
+                f'SEM FALHAS - correção atuou em {len(esperas)} boot(s)')
+    return ('BG-2665', titulo, det, 'ok', 'SEM OCORRÊNCIAS nesta sessão')
+
+
 def build_bug_section_html(loops):
-    # Bug cards only make sense on logs that carry their data (DM4780 platform)
+    # Os cards do DM4780 so fazem sentido em logs que trazem os dados deles
     gnss_names = BUG_TESTS['BG-2109']
-    if not any(l.get('bcm143_pass') is not None or l['dpll_refs'] or
-               any(t in l['test_results'] for t in gnss_names) for l in loops):
+    cards = []
+    if any(l.get('bcm143_pass') is not None or l['dpll_refs'] or
+           any(t in l['test_results'] for t in gnss_names) for l in loops):
+        cards = build_bug_cards(loops)
+    bg2665 = build_bg2665_card(loops)
+    if bg2665:
+        cards.append(bg2665)
+    if not cards:
         return ''
-    cards = build_bug_cards(loops)
     parts = []
     for bug_id, title, details, st, verdict in cards:
         detail_html = '<br>'.join(details)
@@ -1687,8 +1839,13 @@ def build(loops, filepath, sensor_keys, ref_ok, camara=()):
         dut_copy_html_js = '""'
 
     times = [l['login_time'] for l in loops if l['login_time']]
-    date_range = (f"{min(times).strftime('%d/%m/%Y %H:%M')} &rarr; "
-                  f"{max(times).strftime('%H:%M')}") if times else '-'
+    # Testes de varios dias: sem a data no fim, "19/11 17:01 -> 17:36" parecia meia hora
+    if times:
+        fim_fmt = '%H:%M' if max(times).date() == min(times).date() else '%d/%m/%Y %H:%M'
+        date_range = (f"{min(times).strftime('%d/%m/%Y %H:%M')} &rarr; "
+                      f"{max(times).strftime(fim_fmt)}")
+    else:
+        date_range = '-'
 
     boot_card_cls = 'boot-fail' if n_boot_fail > 0 else 'boot-none' if ref_ok == 0 else 'boot-ok'
 

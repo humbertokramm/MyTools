@@ -7,6 +7,17 @@ A boot passes when ft_card_init answers 55 and every Test Report item is OK.
 A boot that reboots without printing the Test Report counts as a failure;
 the last boot of a live log is shown as "em andamento".
 
+"Modo info" (rebootTF.lua ... info): the verify is off, so there is no Test
+Report to demand. The boot passes when it reaches the reboot with the FPGA
+driver loaded and ft_card_init = 55.
+
+In both modes every boot is checked for BG-2665 (FPGA driver not loaded):
+"Load fpga-* module" under 1 s (normal ~2 s), the service in FAILED, FPGA
+accesses failing with ENOENT, or the rebootTF guard stopping the loop.
+A load of 2.9 s or more is not a failure: with change 189093 it means the
+script waited for the FPGA USB, the boot the fix saved. Those boots are
+counted and listed in the FPGA section.
+
 Each boot also gets the chamber PV/SP (controller reading) at that moment, read
 from the chamber monitor history (http://172.22.239.100/camara, 1 sample/min,
 kept 31 days). Without that history the report is built as before.
@@ -53,6 +64,24 @@ TOTAL_RE   = re.compile(r'Total System Power Consumption: ([\d.]+)')
 DUT_RE     = re.compile(r'(DM[\w ]+?)\s+-\s+(\d{3}\.\d{4}\.\d+)\s+-\s+(\d+)')
 FW_RE      = re.compile(r'VERSION_ID=(\S+)')
 COMMIT_RE  = re.compile(r'\]\s*commit ([0-9a-f]{40})')
+MODE_RE    = re.compile(r'\]\s*Modo:\s*(\w+)')
+END_RE     = re.compile(r'Fim do teste: Iniciando o reboot')
+# BG-2665
+FPGA_START_RE  = re.compile(r'Starting Load fpga-[\w-]+ module')
+FPGA_OK_RE     = re.compile(r'\[\s*OK\s*\]\s+Finished Load fpga-[\w-]+ module')
+FPGA_FAIL_RE   = re.compile(r'\[FAILED\].*Load fpga-[\w-]+ module')
+FPGA_ENOENT_RE = re.compile(r'Driver error \(No such file or directory\)')
+FPGA_GUARD_RE  = re.compile(r'BG-2665: FPGA AUSENTE')
+# Contador do proprio fpga-pd3450 (change 189093), impresso pelo rebootTF.lua a
+# cada boot: "BG-2665 Number of tries: N of M". Quando existe, vale mais que a
+# estimativa pela duracao. Imagem sem o change: "... sem contador ...".
+FPGA_TRIES_RE  = re.compile(r'BG-2665 Number of tries:\s*(\d+)\s+of\s+(\d+)')
+FPGA_MIN_S     = 1.0
+# Com o change 189093 (fpga-pd3450 espera o /dev/ttyACM0 em ate 20 x 1 s), cada
+# tentativa extra soma ~1 s ao servico. Normal ~2,0-2,1 s; 2,9 s ou mais = o
+# script esperou a USB da FPGA, ou seja, o boot que antes cairia no BG-2665.
+FPGA_WAIT_S    = 2.9
+FPGA_BASE_S    = 2.05
 
 
 def parse_ts(line):
@@ -70,7 +99,9 @@ def resolve(arg):
 def new_boot(n, ts, line):
     return {'n': n, 'ts': ts, 'line': line, 'login_ts': None, 'resp': None,
             'report': {}, 'in_report': False, 'finished': False, 'temps': {},
-            'rails': {}, 'ping_lost': [], 'total': None, 'report_ts': None}
+            'rails': {}, 'ping_lost': [], 'total': None, 'report_ts': None,
+            'mode': None, 'end': False, 'fpga_t0': None, 'fpga_s': None,
+            'fpga_failed': False, 'enoent': 0, 'guard': False, 'tries': None}
 
 
 def parse(filepath):
@@ -102,6 +133,22 @@ def parse(filepath):
                 cur['login_ts'] = ts
             if cur['resp'] is None and (m := RESP_RE.search(line)):
                 cur['resp'] = m.group(1)
+            if cur['mode'] is None and (m := MODE_RE.search(line)):
+                cur['mode'] = m.group(1)
+            if END_RE.search(line):
+                cur['end'] = True
+            if cur['fpga_t0'] is None and FPGA_START_RE.search(line):
+                cur['fpga_t0'] = ts
+            elif FPGA_OK_RE.search(line) and cur['fpga_t0'] and ts and cur['fpga_s'] is None:
+                cur['fpga_s'] = (ts - cur['fpga_t0']).total_seconds()
+            if FPGA_FAIL_RE.search(line):
+                cur['fpga_failed'] = True
+            if FPGA_ENOENT_RE.search(line):
+                cur['enoent'] += 1
+            if FPGA_GUARD_RE.search(line):
+                cur['guard'] = True
+            if cur['tries'] is None and (m := FPGA_TRIES_RE.search(line)):
+                cur['tries'] = (int(m.group(1)), int(m.group(2)))
             if (m := TEMP_RE.search(line)):
                 key = 'Temp 1' if 'Temp 1' not in t else 'Temp 2'
                 t.setdefault(key, float(m.group(1)))
@@ -127,9 +174,26 @@ def parse(filepath):
 
     for idx, b in enumerate(boots):
         last = idx == len(boots) - 1
+        fpga = fpga_anomalias(b)
+        if b['mode'] == 'info':
+            # Sem verify nao ha Test Report: o boot fecha no "Fim do teste"
+            b['bad_items'] = fpga[:]
+            if b['resp'] is not None and b['resp'] != '55':
+                b['bad_items'].append(f'ft_card_init={b["resp"]}')
+            if b['guard'] or b['bad_items']:
+                b['status'] = 'fail'
+            elif b['end']:
+                b['status'] = 'pass'
+            elif last:
+                b['status'] = 'pending'
+            else:
+                b['status'] = 'fail'
+                b['bad_items'] = ['reboot antes do fim']
+            continue
         b['bad_items'] = [k for k, ok in b['report'].items() if not ok]
         if b['resp'] is not None and b['resp'] != '55':
             b['bad_items'].insert(0, f'ft_card_init={b["resp"]}')
+        b['bad_items'] = fpga + b['bad_items']
         if not b['report'] and not b['bad_items']:
             b['status'] = 'pending' if last else 'fail'
             if not last:
@@ -137,6 +201,41 @@ def parse(filepath):
         else:
             b['status'] = 'fail' if b['bad_items'] else 'pass'
     return boots, info
+
+
+def fpga_anomalias(b):
+    """Descricoes do BG-2665 neste boot (vazio = FPGA normal)."""
+    a = []
+    if b['guard']:
+        a.append('BG-2665: /dev/fpga-debug ausente (loop interrompido'
+                 + (f'; tentativas {fmt_tries(b["tries"])}' if b['tries'] else '') + ')')
+    if b['fpga_failed']:
+        a.append('BG-2665: serviço da FPGA em FAILED')
+    if b['fpga_s'] is not None and b['fpga_s'] < FPGA_MIN_S:
+        a.append(f'BG-2665: driver da FPGA em {b["fpga_s"] * 1000:.0f} ms')
+    if b['enoent']:
+        a.append(f'BG-2665: {b["enoent"]} acessos à FPGA com ENOENT')
+    return a
+
+
+def fpga_espera_s(dur, anomalo, tries=None):
+    """Segundos extras esperando a USB da FPGA (None = nao esperou).
+
+    Com o contador do script (tries), a espera e exata: tries - 1. Sem ele
+    (imagem antiga, ou log sem a linha), estima pela duracao do servico.
+    """
+    if anomalo:
+        return None
+    if tries is not None:
+        return tries - 1 if tries > 1 else None
+    if dur is None or dur < FPGA_WAIT_S:
+        return None
+    return max(1, round(dur - FPGA_BASE_S))
+
+
+def fmt_tries(t):
+    return f'{t[0]} de {t[1]}' if t else '-'
+
 
 
 def TS_STRIP(line):
@@ -181,6 +280,7 @@ S = {
     'note':'font-size:.78rem;color:#666;margin:4px 0',
 }
 COLORS = {'pass': ('#2e7d32', '#e8f5e9'), 'fail': ('#c62828', '#ffebee'),
+          'warn': ('#e65100', '#fff3e0'),
           'pending': ('#9e9e9e', '#f5f5f5')}
 LABEL  = {'pass': 'OK', 'fail': 'FALHA', 'pending': 'em andamento'}
 
@@ -247,8 +347,18 @@ def build(boots, info, logname, title, ref, samples=()):
         meta.append(f'<b>Câmara:</b> {esc(cam)}')
     p.append(f'<p style="{S["p"]}">' + ' &nbsp;|&nbsp; '.join(meta) + '</p>')
     n_items = max((len(b['report']) for b in done), default=0)
-    p.append(f'<p style="{S["p"]}"><b>Critério:</b> a cada boot, <code>ft_card_init</code> = 55 '
-             f'e todos os {n_items} itens do Test Report em OK.</p>')
+    modos = {b['mode'] or 'run' for b in boots}
+    fpga_txt = (f'driver da FPGA carregado (serviço em {FPGA_MIN_S:.0f} s ou mais, '
+                f'sem acessos com ENOENT)')
+    if modos == {'info'}:
+        crit = (f'modo <code>info</code>, sem verify: a cada boot, {fpga_txt}, '
+                f'<code>ft_card_init</code> = 55 e reboot concluído.')
+    else:
+        crit = (f'a cada boot, {fpga_txt}, <code>ft_card_init</code> = 55 '
+                f'e todos os {n_items} itens do Test Report em OK.')
+        if 'info' in modos:
+            crit += ' Nos boots em modo <code>info</code> o Test Report não é exigido.'
+    p.append(f'<p style="{S["p"]}"><b>Critério:</b> {crit}</p>')
 
     # Summary
     cyc = [(b2['ts'] - b1['ts']).total_seconds() for b1, b2 in zip(boots, boots[1:])
@@ -258,6 +368,58 @@ def build(boots, info, logname, title, ref, samples=()):
              f'{th("Duração do ciclo (méd)")}</tr><tr>{tdr(len(done))}'
              f'{tds("pass", len(done) - len(fails))}{tds("fail" if fails else "pass", len(fails))}'
              f'{tdr(f"{avg(cyc) / 60:.1f} min" if cyc else "-")}</tr></table>')
+
+    # BG-2665: carga do driver da FPGA
+    med = [b['fpga_s'] for b in boots if b['fpga_s'] is not None]
+    ruins = [b for b in boots if fpga_anomalias(b)]
+    esperas = [(b, e) for b in boots
+               if (e := fpga_espera_s(b['fpga_s'], fpga_anomalias(b),
+                                      b['tries'][0] if b['tries'] else None)) is not None]
+    n_cont = sum(1 for b in boots if b['tries'])
+    lim = f'{FPGA_WAIT_S:.1f}'.replace('.', ',')
+    if med or ruins:
+        p.append(f'<h3 style="{S["h3"]}">Driver da FPGA no boot (BG-2665)</h3>')
+        p.append(f'<table style="{S["tbl"]}"><tr>{th("Boots medidos")}{th("mín (s)")}'
+                 f'{th("méd (s)")}{th("máx (s)")}{th(f"abaixo de {FPGA_MIN_S:.0f} s")}'
+                 f'{th("FAILED")}{th("com ENOENT")}{th("guarda acionada")}'
+                 f'{th(f"esperou a USB (≥ {lim} s)")}</tr><tr>'
+                 f'{tdr(len(med))}'
+                 f'{tdr(f"{min(med):.3f}" if med else "-")}'
+                 f'{tdr(f"{avg(med):.3f}" if med else "-")}'
+                 f'{tdr(f"{max(med):.3f}" if med else "-")}')
+        for n in (sum(1 for d in med if d < FPGA_MIN_S),
+                  sum(1 for b in boots if b['fpga_failed']),
+                  sum(1 for b in boots if b['enoent']),
+                  sum(1 for b in boots if b['guard'])):
+            p.append(tds('fail' if n else 'pass', n))
+        p.append(tds('warn', len(esperas)) if esperas else tdr(0))
+        p.append('</tr></table>')
+        p.append(f'<p style="{S["note"]}">Carga normal ~1,7 a 2,1 s. Com a espera do '
+                 f'<code>/dev/ttyACM0</code> (change 189093), cada tentativa extra soma ~1 s: '
+                 f'{lim} s ou mais = o script esperou a USB da FPGA, ou seja, '
+                 f'o boot que antes cairia no BG-2665. Não conta como falha. '
+                 f'Contador do script (<code>Number of tries</code>) lido em {n_cont} de '
+                 f'{len(boots)} boots; onde existe, a espera vem dele, e não da duração.</p>')
+        if ruins:
+            p.append(f'<table style="{S["tbl"]}"><tr>{th("Boot")}{th("Horário")}'
+                     f'{th("Carga (ms)")}{th("Ocorrência")}</tr>')
+            for b in ruins:
+                hora  = b['ts'].strftime('%d/%m %H:%M:%S') if b['ts'] else '-'
+                carga = '%.0f' % (b['fpga_s'] * 1000) if b['fpga_s'] is not None else '-'
+                p.append('<tr>' + tdr(b['n']) + td(hora) + tdr(carga)
+                         + td('; '.join(fpga_anomalias(b))) + '</tr>')
+            p.append('</table>')
+        if esperas:
+            p.append(f'<table style="{S["tbl"]}"><tr>{th("Boot")}{th("Horário")}'
+                     f'{th("Carga (s)")}{th("Tentativas")}{th("Espera")}</tr>')
+            for b, e in esperas:
+                hora  = b['ts'].strftime('%d/%m %H:%M:%S') if b['ts'] else '-'
+                carga = f'{b["fpga_s"]:.3f}' if b['fpga_s'] is not None else '-'
+                esp   = (f'{e} s (contador)' if b['tries']
+                         else f'~{e} s (estimada pela duração)')
+                p.append('<tr>' + tdr(b['n']) + td(hora) + tdr(carga)
+                         + tdr(fmt_tries(b['tries'])) + td(esp) + '</tr>')
+            p.append('</table>')
 
     # Grid
     p.append(f'<h3 style="{S["h3"]}">Boots</h3>')
