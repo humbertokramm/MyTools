@@ -178,7 +178,28 @@ if result <> 2 then
 endif
 dispstr #13#10 '*** Reinicie o equipamento: a macro espera o GRUB' #13#10
 
-wait 'GNU GRUB'
+; BIOS nova: o menu do GRUB so aparece com ESC nos 5 s depois do aviso
+; "Press ESC repeatedly ...". A antiga mostra o menu direto.
+wait 'Press ESC repeatedly' 'GNU GRUB'
+if result = 1 then
+    achou = 0
+    for i 1 40
+        send #27
+        mtimeout = 150
+        wait 'GNU GRUB'
+        if result = 1 then
+            achou = 1
+            break
+        endif
+    next
+    mtimeout = 0
+    if achou = 0 then
+        messagebox 'O menu do GRUB nao apareceu depois do ESC' 'ONIE'
+        end
+    endif
+endif
+; o ESC que sobrou ja foi lido pelo menu; c abre a linha de comando
+mpause 300
 sendln 'c'
 sendln 'c'
 
