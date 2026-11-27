@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor de profile - câmara EZT-570i</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f6f8; --panel: #ffffff; --line: #d8dde4; --grid: #e8ebef;
+    --grid2: #eef0f3; --zero: #c3c9d1; --head: #eef1f4;
+    --field: #ffffff; --field-off: #f1f3f5;
+    --text: #1b2430; --muted: #687385; --curve: #22313f;
+    --accent: #1565c0; --accent-fill: #1565c0; --accent-soft: #e3efff;
+    --warn: #9a5b00; --warn-bg: #fff6e0; --warn-line: #f0d58a; --bad: #b3261e;
+    --k-pat-bg: #eef7ee; --k-pat-line: #bfdcbf; --k-pat: #2c6b2f;
+    --k-ram-bg: #fff3e6; --k-ram-line: #f0cfa3; --k-ram: #9a5b00;
+    --k-deg-bg: #eef0fb; --k-deg-line: #c5cbee; --k-deg: #3a4699;
+  }
+  @media (prefers-color-scheme: dark) {    /* mesmo tema escuro de /camara e da reserva de IPs */
+    :root {
+      --bg: #14191f; --panel: #1d242c; --line: #3a4653; --grid: #2a333d;
+      --grid2: #252d36; --zero: #5b6875; --head: #232b34;
+      --field: #161c23; --field-off: #232b34;
+      --text: #dbe4ec; --muted: #8a97a3; --curve: #c9d4de;
+      --accent: #6aa9ee; --accent-fill: #2b6cb0; --accent-soft: #22344a;
+      --warn: #e0b25c; --warn-bg: #33290f; --warn-line: #6b5420; --bad: #f0766e;
+      --k-pat-bg: #1c3020; --k-pat-line: #2f5a35; --k-pat: #8fd197;
+      --k-ram-bg: #3a2a14; --k-ram-line: #6b4c1f; --k-ram: #e9b872;
+      --k-deg-bg: #222848; --k-deg-line: #3d4680; --k-deg: #a9b3f2;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); height: 100vh;
+         display: flex; flex-direction: column;
+         font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 16px; flex: none;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  header .title { font-weight: 600; font-size: 16px; }
+  header .title span { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 8px; }
+  .grow { flex: 1; }
+  button { font: inherit; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px;
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
+  button.primary:hover { color: #fff; filter: brightness(1.1); }
+  main { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 1320px; margin: 0 auto;
+         padding: 10px 16px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 14px; flex: none; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+  label { color: var(--muted); }
+  input { font: inherit; color: var(--text); padding: 4px 6px; border: 1px solid var(--line);
+          border-radius: 5px; background: var(--field); }
+  input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  input:disabled { background: var(--field-off); color: var(--muted); }
+  input.bad { border-color: var(--bad); color: var(--bad); }
+  #name { width: 130px; font-family: Consolas, monospace; }
+  #summary { color: var(--muted); }
+  #summary b { color: var(--text); font-weight: 600; }
+  #chartWrap { width: 100%; overflow: hidden; }
+  #chart { display: block; user-select: none; touch-action: none; }
+  #info { margin-top: 6px; padding: 6px 10px; background: var(--accent-soft); border-radius: 6px; min-height: 31px; }
+  .hint { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
+  .lbl { font-weight: 600; }
+  #insT { width: 70px; } #insD { width: 84px; font-family: Consolas, monospace; }
+  #warnings:empty { display: none; }
+  #warnings { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn);
+              border-radius: 8px; padding: 8px 14px; }
+  #warnings div + div { margin-top: 3px; }
+  .tableWrap { padding: 0; overflow: auto; flex: 1 1 0; min-height: 230px; position: relative; }
+  table { border-collapse: collapse; width: 100%; }
+  th { position: sticky; top: 0; background: var(--head); text-align: left; font-weight: 600; font-size: 12.5px;
+       padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; z-index: 1; }
+  th.c, td.c { text-align: center; }
+  td { padding: 3px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  tr.sel td { background: var(--accent-soft); }
+  tbody tr { cursor: pointer; }
+  td.num { color: var(--muted); font-variant-numeric: tabular-nums; width: 34px; }
+  .mono { font-family: Consolas, monospace; }
+  .muted { color: var(--muted); }
+  .w-dur { width: 84px; } .w-sp { width: 72px; } .w-n { width: 58px; }
+  .kind { display: inline-block; min-width: 66px; text-align: center; font-size: 12px; padding: 1px 7px;
+          border-radius: 10px; border: 1px solid var(--line); color: var(--muted); }
+  .k-patamar { background: var(--k-pat-bg); border-color: var(--k-pat-line); color: var(--k-pat); }
+  .k-rampa   { background: var(--k-ram-bg); border-color: var(--k-ram-line); color: var(--k-ram); }
+  .k-degrau  { background: var(--k-deg-bg); border-color: var(--k-deg-line); color: var(--k-deg); }
+  .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; margin-left: 4px; }
+  td.acts button { padding: 1px 7px; margin-right: 2px; font-size: 13px; }
+  .drop { outline: 3px dashed var(--accent); outline-offset: -8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">Editor de profile <span>CSZ Z-32 Plus · controlador EZT-570i</span></div>
+  <div class="grow"></div>
+  <button id="btnOpen" title="Ctrl+O">Abrir…</button>
+  <button id="btnNew">Novo</button>
+  <button id="btnUndo" title="Ctrl+Z">Desfazer</button>
+  <button id="btnRedo" title="Ctrl+Y">Refazer</button>
+  <button id="btnSave" class="primary" title="Ctrl+S">Salvar .txt</button>
+  <input type="file" id="fileIn" accept=".txt,text/plain" hidden>
+</header>
+
+<main>
+  <section class="panel row">
+    <label>Nome do profile <input id="name" maxlength="10" spellcheck="false" autocomplete="off"></label>
+    <div id="summary"></div>
+  </section>
+
+  <section class="panel">
+    <div id="chartWrap"><svg id="chart"></svg></div>
+    <div id="info"></div>
+    <div class="hint">Arraste um ponto na vertical para mudar a temperatura ou na horizontal para mudar a duração do step
+      (passos de 1 °C e 5 min; com Shift, 0,5 °C e 1 min). Arraste um patamar para subir ou descer o trecho inteiro.</div>
+  </section>
+
+  <section class="panel row">
+    <span class="lbl">Inserir após o step selecionado:</span>
+    <label>Temperatura <input id="insT" type="number" step="1" value="25"> °C</label>
+    <label>Duração <input id="insD" value="0:30:00" title="h:mm:ss, h:mm ou só minutos"></label>
+    <button id="insJumpHold" title="Dois steps: vai direto para a temperatura e segura pela duração">Degrau + patamar</button>
+    <button id="insRamp" title="Um step: chega na temperatura ao fim da duração">Rampa até a temperatura</button>
+    <button id="insHold" title="Um step: mantém a temperatura atual pela duração">Patamar (mantém)</button>
+  </section>
+
+  <div id="warnings"></div>
+
+  <section class="panel tableWrap">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Tipo</th><th>Início</th><th>Duração (h:mm:ss)</th><th>Temp. SP (°C)</th>
+        <th class="c">Chamber</th><th class="c">Humidity</th><th class="c">Dry air purge</th>
+        <th title="Ao terminar o step, volta para este step">Loop: volta ao step</th>
+        <th title="Quantas vezes o salto é feito (0 = sem loop)">Loop: vezes</th><th></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+'use strict';
+/* ----------------------------------------------------------------------------
+   Formato do arquivo de profile (.txt) do EZT-570i, como exportado pela câmara:
+   100 linhas CRLF, 15 campos separados por vírgula.
+   Linha 1 (cabeçalho): campos 4-8 = nome do profile (2 caracteres por número,
+     byte baixo primeiro, completado com espaços); campo 9 = total de steps.
+   Linhas 2-100 (um step por linha; as não usadas ficam com um padrão fixo):
+     0 = horas; 1 = minutos*256 + segundos; 2 = bitmask de eventos;
+     8 = jump step; 9 = jump count; 10 = setpoint de temperatura.
+   Os demais campos não foram identificados: o editor nunca os altera, só os
+   copia do arquivo aberto (ou do step vizinho, ao inserir um step novo).
+---------------------------------------------------------------------------- */
+const LIMITS = { spMin: -40, spMax: 80, maxSteps: 99, nameLen: 10 };   // limites de SP da tela Setup da câmara
+const EVENT_BITS = [{ bit: 1, label: 'Chamber' }, { bit: 2, label: 'Humidity' }, { bit: 8, label: 'Dry air purge' }];
+const KNOWN_EVENTS = EVENT_BITS.reduce((m, e) => m | e.bit, 0);
+const PAD_ROW = '0,0,0,0,0,0,0,32.0,1,0,0,0,0,0,0'.split(',');   // slot de step não usado
+const NEW_HEADER = '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0'.split(',');
+const NEW_EVENTS = 11;                                             // Chamber + Humidity + Dry air purge
+const KIND_LABEL = { degrau: 'Degrau', patamar: 'Patamar', rampa: 'Rampa' };
+
+let prof = null, sel = 0, dirty = false, nextId = 1, drag = null;
+const undoStack = [], redoStack = [];
+const $ = id => document.getElementById(id);
+
+/* ------------------------------ arquivo ---------------------------------- */
+function decodeName(words) {
+  let s = '';
+  for (const w of words) { const n = Number(w) | 0; s += String.fromCharCode(n & 255, (n >> 8) & 255); }
+  return s.replace(/[\0 ]+$/, '');
+}
+function encodeName(name) {
+  const p = name.padEnd(LIMITS.nameLen, ' ').slice(0, LIMITS.nameLen), out = [];
+  for (let i = 0; i < LIMITS.nameLen; i += 2) out.push(p.charCodeAt(i) + p.charCodeAt(i + 1) * 256);
+  return out;
+}
+function parseProfile(text) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  if (lines.length < 2) throw new Error('Arquivo vazio ou curto demais para ser um profile.');
+  const rows = lines.map(l => l.split(',').map(t => t.trim()));
+  if (rows.some(r => r.length !== 15 || r.some(t => t === '' || !isFinite(Number(t)))))
+    throw new Error('Formato inesperado: cada linha deve ter 15 campos numéricos.');
+  const header = rows[0], body = rows.slice(1);
+  let n = parseInt(header[9], 10);
+  if (!(n >= 1 && n <= body.length)) {            // cabeçalho sem contagem válida: para no 1º slot vazio
+    n = body.findIndex(r => Number(r[2]) === 0);
+    if (n < 0) n = body.length;
+  }
+  if (n < 1) throw new Error('O profile não tem nenhum step.');
+  const steps = body.slice(0, n).map(r => ({
+    id: nextId++, raw: r.slice(),
+    dur: Number(r[0]) * 3600 + (Number(r[1]) >> 8) * 60 + (Number(r[1]) & 255),
+    events: Number(r[2]), sp: Number(r[10]), loop: null,
+    _js: Number(r[8]), _jc: Number(r[9]),
+  }));
+  for (const st of steps) {
+    if (st._jc > 0) st.loop = { target: steps[Math.min(Math.max(st._js, 1), n) - 1].id, count: st._jc };
+    delete st._js; delete st._jc;
+  }
+  const name = decodeName(header.slice(4, 9));
+  return { name, origName: name, headerRaw: header.slice(), steps,
+           padRaw: (body[n] || PAD_ROW).slice(), eol, slots: Math.max(LIMITS.maxSteps, body.length) };
+}
+function fmtNum(v) { return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10); }
+function setTok(row, i, v) { if (Number(row[i]) !== v) row[i] = fmtNum(v); }   // só reescreve o que mudou
+function idxOf(id) { return prof.steps.findIndex(s => s.id === id); }
+function serializeProfile(p) {
+  const header = p.headerRaw.slice();
+  if (p.name !== p.origName) encodeName(p.name).forEach((w, i) => { header[4 + i] = String(w); });
+  setTok(header, 9, p.steps.length);
+  const out = [header.join(',')];
+  p.steps.forEach((st, i) => {
+    const r = st.raw.slice(), loop = st.loop && st.loop.count > 0;
+    setTok(r, 0, Math.floor(st.dur / 3600));
+    setTok(r, 1, Math.floor(st.dur % 3600 / 60) * 256 + st.dur % 60);
+    setTok(r, 2, st.events);
+    setTok(r, 8, loop ? Math.max(p.steps.findIndex(s => s.id === st.loop.target), 0) + 1 : i + 2);
+    setTok(r, 9, loop ? st.loop.count : 0);
+    setTok(r, 10, st.sp);
+    out.push(r.join(','));
+  });
+  for (let i = p.steps.length; i < p.slots; i++) out.push(p.padRaw.join(','));
+  return out.join(p.eol) + p.eol;
+}
+function mkStep(base, dur, sp) {
+  return { id: nextId++, raw: (base ? base.raw : PAD_ROW).slice(), dur, sp,
+           events: base ? base.events : NEW_EVENTS, loop: null };
+}
+function newProfile() {
+  prof = { name: 'NOVO', origName: null, headerRaw: NEW_HEADER.slice(), steps: [mkStep(null, 0, 25)],
+           padRaw: PAD_ROW.slice(), eol: '\r\n', slots: LIMITS.maxSteps };
+  resetSession();
+}
+function loadText(text, fileName) {
+  prof = parseProfile(text);
+  if (!prof.name && fileName) prof.name = fileName.replace(/\.[^.]*$/, '').slice(0, LIMITS.nameLen);
+  resetSession();
+}
+function resetSession() { sel = 0; dirty = false; undoStack.length = 0; redoStack.length = 0; renderAll(); }
+
+/* ------------------------------ helpers ---------------------------------- */
+function fmtDur(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+function fmtHM(sec) { return Math.floor(sec / 3600) + ':' + String(Math.floor(sec % 3600 / 60)).padStart(2, '0'); }
+function fmtT(v) { return String(v).replace('.', ',') + ' °C'; }
+function parseDur(str) {                 // "h:mm:ss", "h:mm" ou só minutos
+  const p = String(str).trim().split(':').map(x => x.trim());
+  if (!p.length || p.length > 3 || p.some(x => !/^\d+$/.test(x))) return null;
+  const n = p.map(Number);
+  const sec = n.length === 1 ? n[0] * 60 : n.length === 2 ? n[0] * 3600 + n[1] * 60 : n[0] * 3600 + n[1] * 60 + n[2];
+  return sec <= 999 * 3600 ? sec : null;
+}
+function layout() {                      // trecho de cada step: (t0,v0) -> (t1,v1)
+  let t = 0, v = prof.steps[0].sp;
+  const segs = prof.steps.map(st => { const s = { t0: t, v0: v, t1: t + st.dur, v1: st.sp }; t = s.t1; v = s.v1; return s; });
+  return { segs, total: t };
+}
+function stepKind(i, segs) {
+  if (prof.steps[i].dur === 0) return 'degrau';
+  return segs[i].v0 === segs[i].v1 ? 'patamar' : 'rampa';
+}
+function describeStep(i, segs) {
+  const st = prof.steps[i], sg = segs[i], kind = stepKind(i, segs);
+  let s = 'Step ' + (i + 1) + ' · ';
+  if (kind === 'degrau') s += 'degrau para ' + fmtT(st.sp) + (sg.v0 !== sg.v1 ? ' (vindo de ' + fmtT(sg.v0) + ')' : '');
+  else if (kind === 'patamar') s += 'patamar em ' + fmtT(st.sp) + ' por ' + fmtDur(st.dur);
+  else s += 'rampa de ' + fmtT(sg.v0) + ' a ' + fmtT(sg.v1) + ' em ' + fmtDur(st.dur) +
+            ' (' + ((sg.v1 - sg.v0) / (st.dur / 60)).toFixed(2).replace('.', ',') + ' °C/min)';
+  s += ' · começa em ' + fmtDur(sg.t0);
+  if (st.loop && st.loop.count > 0) s += ' · ao terminar, volta ao step ' + (idxOf(st.loop.target) + 1) + ' (' + st.loop.count + '×)';
+  return s;
+}
+
+/* --------------------------- edição / undo -------------------------------- */
+function snapshot() { return JSON.stringify({ name: prof.name, steps: prof.steps, sel }); }
+function restore(json) {
+  const s = JSON.parse(json);
+  prof.name = s.name; prof.steps = s.steps; sel = Math.min(s.sel, s.steps.length - 1);
+  nextId = Math.max(nextId, ...s.steps.map(x => x.id + 1));
+}
+function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 200) undoStack.shift(); redoStack.length = 0; }
+function mutate(fn) { pushUndo(); fn(); dirty = true; renderAll(); }
+function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); dirty = true; renderAll(); }
+function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); dirty = true; renderAll(); }
+
+function insertSteps(make) {             // make(base) -> lista de steps novos, inseridos após o selecionado
+  const base = prof.steps[sel], novos = make(base);
+  if (prof.steps.length + novos.length > LIMITS.maxSteps) { alert('O profile aceita no máximo ' + LIMITS.maxSteps + ' steps.'); return; }
+  mutate(() => { prof.steps.splice(sel + 1, 0, ...novos); sel += novos.length; });
+  scrollToSel();
+}
+function removeStep(i) {
+  if (prof.steps.length === 1) return;
+  mutate(() => {
+    const gone = prof.steps.splice(i, 1)[0];
+    for (const st of prof.steps) if (st.loop && st.loop.target === gone.id) st.loop.target = prof.steps[0].id;
+    if (sel > i || sel >= prof.steps.length) sel = Math.max(0, sel - 1);
+  });
+}
+function moveStep(i, d) {
+  const j = i + d;
+  if (j < 0 || j >= prof.steps.length) return;
+  mutate(() => { const a = prof.steps; [a[i], a[j]] = [a[j], a[i]]; sel = j; });
+}
+
+/* ------------------------------ gráfico ---------------------------------- */
+function makeScale() {
+  const W = Math.max(640, $('chartWrap').clientWidth), H = 320, m = { l: 46, r: 18, t: 22, b: 30 };
+  const { total } = layout(), sps = prof.steps.map(s => s.sp);
+  const yLo = Math.min(-10, Math.floor((Math.min(...sps) - 6) / 10) * 10);
+  const yHi = Math.max(60, Math.ceil((Math.max(...sps) + 6) / 10) * 10);
+  const tMax = Math.max(total, 1800) * 1.03, w = W - m.l - m.r, h = H - m.t - m.b;
+  return { W, H, m, w, h, yLo, yHi, tMax,
+    x: t => m.l + t / tMax * w, y: v => m.t + (yHi - v) / (yHi - yLo) * h,
+    xInv: px => (px - m.l) / w * tMax, yInv: py => yHi - (py - m.t) / h * (yHi - yLo) };
+}
+function renderChart(frozen) {
+  const sc = frozen || makeScale(), { segs } = layout(), f = n => n.toFixed(1);
+  let g = '';
+  const yStep = (sc.yHi - sc.yLo) > 80 ? 20 : 10;
+  for (let v = sc.yLo; v <= sc.yHi; v += yStep) {
+    const y = f(sc.y(v));
+    g += `<line x1="${sc.m.l}" x2="${sc.W - sc.m.r}" y1="${y}" y2="${y}" stroke="${v === 0 ? 'var(--zero)' : 'var(--grid)'}"/>` +
+         `<text x="${sc.m.l - 7}" y="${y}" dy="4" text-anchor="end" font-size="11.5" fill="var(--muted)">${v}</text>`;
+  }
+  const xStep = [300, 600, 900, 1800, 3600, 7200, 10800, 14400, 21600, 43200, 86400].find(s => sc.tMax / s <= 14) || 172800;
+  for (let t = 0; t <= sc.tMax; t += xStep) {
+    const x = f(sc.x(t));
+    g += `<line x1="${x}" x2="${x}" y1="${sc.m.t}" y2="${sc.H - sc.m.b}" stroke="var(--grid2)"/>` +
+         `<text x="${x}" y="${sc.H - sc.m.b + 16}" text-anchor="middle" font-size="11.5" fill="var(--muted)">${fmtHM(t)}</text>`;
+  }
+  g += `<text x="${sc.m.l - 7}" y="12" text-anchor="end" font-size="11.5" fill="var(--muted)">°C</text>`;
+  g += `<rect x="${sc.m.l}" y="${sc.m.t}" width="${sc.w}" height="${sc.h}" fill="none" stroke="var(--line)"/>`;
+
+  let d = `M${f(sc.x(0))},${f(sc.y(segs[0].v0))}`;
+  for (const s of segs) d += ` L${f(sc.x(s.t1))},${f(sc.y(s.v1))}`;
+  g += `<path d="${d}" fill="none" stroke="var(--curve)" stroke-width="2" stroke-linejoin="round"/>`;
+
+  const ss = segs[sel];
+  g += `<line x1="${f(sc.x(ss.t0))}" y1="${f(sc.y(ss.v0))}" x2="${f(sc.x(ss.t1))}" y2="${f(sc.y(ss.v1))}" stroke="var(--accent)" stroke-width="4" stroke-linecap="round"/>`;
+
+  segs.forEach((s, i) => {                               // rótulo dos patamares e marca de loop
+    const st = prof.steps[i], px = sc.x(s.t1) - sc.x(s.t0);
+    if (stepKind(i, segs) === 'patamar' && px >= 46)
+      g += `<text x="${f((sc.x(s.t0) + sc.x(s.t1)) / 2)}" y="${f(sc.y(s.v1) - 7)}" text-anchor="middle" font-size="11.5" fill="var(--curve)" stroke="var(--panel)" stroke-width="3" paint-order="stroke">` +
+           fmtT(st.sp) + (px >= 112 ? ' · ' + fmtHM(st.dur) : '') + '</text>';
+    if (st.loop && st.loop.count > 0)
+      g += `<text x="${f(sc.x(s.t1) - 6)}" y="${f(sc.y(s.v1) + 16)}" text-anchor="end" font-size="11.5" fill="var(--accent)" stroke="var(--panel)" stroke-width="3" paint-order="stroke">↩ step ${idxOf(st.loop.target) + 1} · ${st.loop.count}×</text>`;
+  });
+  segs.forEach((s, i) => {                               // áreas clicáveis dos trechos
+    const cur = stepKind(i, segs) === 'patamar' ? 'ns-resize' : 'pointer';
+    g += `<line data-step="${i}" data-kind="seg" x1="${f(sc.x(s.t0))}" y1="${f(sc.y(s.v0))}" x2="${f(sc.x(s.t1))}" y2="${f(sc.y(s.v1))}" stroke="transparent" stroke-width="14" style="cursor:${cur}"/>`;
+  });
+  segs.forEach((s, i) => {                               // pontos (fim de cada step)
+    const x = f(sc.x(s.t1)), y = f(sc.y(s.v1)), on = i === sel;
+    g += `<circle cx="${x}" cy="${y}" r="${on ? 6 : 3.8}" fill="${on ? 'var(--accent)' : 'var(--panel)'}" stroke="${on ? 'var(--accent)' : 'var(--curve)'}" stroke-width="1.6"/>` +
+         `<circle data-step="${i}" data-kind="pt" cx="${x}" cy="${y}" r="10" fill="transparent" style="cursor:move"><title>${describeStep(i, segs)}</title></circle>`;
+  });
+  const svg = $('chart');
+  svg.setAttribute('width', sc.W); svg.setAttribute('height', sc.H);
+  svg.innerHTML = g;
+  $('info').textContent = describeStep(sel, segs);
+  return sc;
+}
+function plateauGroup(i) {               // steps vizinhos com o mesmo SP (o patamar e quem levou até ele)
+  const v = prof.steps[i].sp; let a = i, b = i;
+  while (a > 0 && prof.steps[a - 1].sp === v) a--;
+  while (b < prof.steps.length - 1 && prof.steps[b + 1].sp === v) b++;
+  return [a, b];
+}
+function onPointerDown(e) {
+  const el = e.target.closest('[data-step]');
+  if (!el) return;
+  const i = +el.dataset.step, kind = el.dataset.kind, sc = makeScale(), { segs } = layout();
+  drag = { i, kind, x0: e.clientX, y0: e.clientY, axis: null, sc, t0: segs[i].t0, saved: false,
+           group: kind === 'seg' && stepKind(i, segs) === 'patamar' ? plateauGroup(i) : null };
+  $('chart').setPointerCapture(e.pointerId);
+  select(i, true);
+}
+function onPointerMove(e) {
+  if (!drag) return;
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+  if (!drag.axis) {
+    if (Math.hypot(dx, dy) < 5) return;
+    drag.axis = drag.kind === 'seg' ? (drag.group ? 'y' : 'none') : (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y');
+  }
+  if (drag.axis === 'none') return;
+  const r = $('chart').getBoundingClientRect(), sc = drag.sc, st = prof.steps[drag.i];
+  let changed = false;
+  if (drag.axis === 'y') {
+    const q = e.shiftKey ? 0.5 : 1;
+    let v = Math.round(sc.yInv(e.clientY - r.top) / q) * q;
+    v = Math.min(Math.max(v, Math.max(sc.yLo, LIMITS.spMin)), Math.min(sc.yHi, LIMITS.spMax));
+    const [a, b] = drag.group || [drag.i, drag.i];
+    if (prof.steps[drag.i].sp !== v) {
+      if (!drag.saved) { pushUndo(); drag.saved = true; }
+      for (let k = a; k <= b; k++) prof.steps[k].sp = v;
+      changed = true;
+    }
+  } else {
+    const q = e.shiftKey ? 60 : 300;
+    const t = Math.min(sc.xInv(e.clientX - r.left), sc.tMax);
+    const dur = Math.max(0, Math.round((t - drag.t0) / q) * q);
+    if (st.dur !== dur) {
+      if (!drag.saved) { pushUndo(); drag.saved = true; }
+      st.dur = dur; changed = true;
+    }
+  }
+  if (changed) { dirty = true; renderChart(sc); }
+}
+function onPointerUp() {
+  if (!drag) return;
+  const moved = drag.saved; drag = null;
+  if (moved) renderAll(); else renderChart();
+}
+
+/* ------------------------------- tabela ---------------------------------- */
+function renderTable() {
+  const { segs } = layout(), n = prof.steps.length;
+  $('tbody').innerHTML = prof.steps.map((st, i) => {
+    const kind = stepKind(i, segs), other = st.events & ~KNOWN_EVENTS, loopOn = st.loop && st.loop.count > 0;
+    const bad = st.sp < LIMITS.spMin || st.sp > LIMITS.spMax ? ' bad' : '';
+    const ev = EVENT_BITS.map((e, k) => `<td class="c"><input type="checkbox" data-i="${i}" data-f="ev${e.bit}" ${st.events & e.bit ? 'checked' : ''}>` +
+      (other && k === EVENT_BITS.length - 1 ? `<span class="badge" title="Outros eventos marcados no arquivo (mantidos como estão): bits ${other}">+${other}</span>` : '') + '</td>').join('');
+    return `<tr data-row="${i}" class="${i === sel ? 'sel' : ''}">
+      <td class="num">${i + 1}</td>
+      <td><span class="kind k-${kind}">${KIND_LABEL[kind]}</span></td>
+      <td class="mono muted">${fmtDur(segs[i].t0)}</td>
+      <td><input class="mono w-dur" data-i="${i}" data-f="dur" value="${fmtDur(st.dur)}"></td>
+      <td><input class="w-sp${bad}" type="number" step="1" data-i="${i}" data-f="sp" value="${st.sp}"></td>
+      ${ev}
+      <td><input class="w-n" type="number" min="1" max="${n}" data-i="${i}" data-f="loopT" value="${loopOn ? idxOf(st.loop.target) + 1 : ''}" ${loopOn ? '' : 'disabled'} placeholder="–"></td>
+      <td><input class="w-n" type="number" min="0" max="999" data-i="${i}" data-f="loopC" value="${loopOn ? st.loop.count : 0}"></td>
+      <td class="acts"><button data-i="${i}" data-act="up" title="Mover para cima">↑</button><button data-i="${i}" data-act="down" title="Mover para baixo">↓</button><button data-i="${i}" data-act="dup" title="Duplicar step">⧉</button><button data-i="${i}" data-act="del" title="Apagar step">✕</button></td>
+    </tr>`;
+  }).join('');
+}
+function applyField(i, f, el) {          // devolve uma função que aplica a edição, ou null se o valor é inválido
+  const st = prof.steps[i];
+  if (f === 'dur') { const d = parseDur(el.value); return d === null ? null : () => { st.dur = d; }; }
+  if (f === 'sp') { const v = Math.round(Number(el.value) * 10) / 10; return el.value === '' || !isFinite(v) ? null : () => { st.sp = v; }; }
+  if (f.startsWith('ev')) { const bit = +f.slice(2); return () => { st.events = el.checked ? st.events | bit : st.events & ~bit; }; }
+  if (f === 'loopC') {
+    const c = Math.floor(Number(el.value));
+    if (!(c >= 0 && c <= 999)) return null;
+    return () => { st.loop = c > 0 ? { target: st.loop ? st.loop.target : prof.steps[0].id, count: c } : null; };
+  }
+  if (f === 'loopT') {
+    const t = Math.floor(Number(el.value));
+    if (!(t >= 1 && t <= prof.steps.length) || !st.loop) return null;
+    return () => { st.loop.target = prof.steps[t - 1].id; };
+  }
+  return null;
+}
+function onTableChange(e) {
+  const el = e.target;
+  if (!el.dataset.f) return;
+  const fn = applyField(+el.dataset.i, el.dataset.f, el);
+  setTimeout(() => {                     // espera o foco ir para o próximo campo e o devolve após redesenhar
+    const a = document.activeElement, key = a && a.dataset && a.dataset.f ? [a.dataset.i, a.dataset.f] : null;
+    if (fn) mutate(fn); else renderTable();
+    if (key) {
+      const el2 = $('tbody').querySelector(`[data-i="${key[0]}"][data-f="${key[1]}"]`);
+      if (el2 && !el2.disabled) { el2.focus(); if (el2.type !== 'checkbox') el2.select(); }
+    }
+  }, 0);
+}
+function onTableClick(e) {
+  const btn = e.target.closest('button[data-act]');
+  if (btn) {
+    const i = +btn.dataset.i, act = btn.dataset.act;
+    if (act === 'up') moveStep(i, -1);
+    else if (act === 'down') moveStep(i, 1);
+    else if (act === 'del') removeStep(i);
+    else if (act === 'dup') { sel = i; insertSteps(base => [mkStep(base, base.dur, base.sp)]); }
+    return;
+  }
+  const tr = e.target.closest('tr[data-row]');
+  if (tr) select(+tr.dataset.row, false);
+}
+function select(i, scroll) {
+  sel = Math.min(Math.max(i, 0), prof.steps.length - 1);
+  $('tbody').querySelectorAll('tr').forEach((tr, k) => tr.classList.toggle('sel', k === sel));
+  if (!drag || !drag.saved) renderChart(drag ? drag.sc : undefined);
+  if (scroll) scrollToSel();
+}
+function scrollToSel() {                 // rola só a tabela, nunca a página (o gráfico não pode sair de baixo do mouse)
+  const wrap = document.querySelector('.tableWrap'), tr = $('tbody').children[sel];
+  if (!tr) return;
+  const head = wrap.querySelector('thead').offsetHeight, top = tr.offsetTop, bot = top + tr.offsetHeight;
+  if (top - head < wrap.scrollTop) wrap.scrollTop = top - head;
+  else if (bot > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = bot - wrap.clientHeight;
+}
+
+/* ------------------------- resumo / avisos / geral ------------------------- */
+function renderSummary() {
+  const { total } = layout(), n = prof.steps.length;
+  const loops = prof.steps.map((st, i) => st.loop && st.loop.count > 0
+    ? `step ${i + 1} volta ao step ${idxOf(st.loop.target) + 1} (${st.loop.count}×)` : null).filter(Boolean);
+  $('summary').innerHTML = `<b>${n}</b> de ${LIMITS.maxSteps} steps · uma passada dura <b>${fmtDur(total)}</b> · ` +
+    (loops.length ? 'loop: ' + loops.join('; ') : 'sem loop');
+  const w = [];
+  if (!prof.name.trim()) w.push('Dê um nome ao profile (até ' + LIMITS.nameLen + ' caracteres).');
+  else if (!/^[A-Za-z0-9_\- ]+$/.test(prof.name)) w.push('O nome tem caracteres fora de letras, números, "_" e "-"; a câmara pode não aceitar.');
+  prof.steps.forEach((st, i) => {
+    if (st.sp < LIMITS.spMin || st.sp > LIMITS.spMax)
+      w.push(`Step ${i + 1}: ${fmtT(st.sp)} está fora dos limites de setpoint da câmara (${LIMITS.spMin} a ${LIMITS.spMax} °C).`);
+    if (st.loop && st.loop.count > 0 && idxOf(st.loop.target) > i)
+      w.push(`Step ${i + 1}: o loop aponta para um step que vem depois dele (step ${idxOf(st.loop.target) + 1}).`);
+  });
+  $('warnings').innerHTML = w.map(x => `<div>⚠ ${x}</div>`).join('');
+}
+function renderAll() {
+  if ($('name').value !== prof.name) $('name').value = prof.name;
+  renderTable(); renderChart(); renderSummary();
+  $('btnUndo').disabled = !undoStack.length; $('btnRedo').disabled = !redoStack.length;
+  $('btnSave').textContent = dirty ? 'Salvar .txt •' : 'Salvar .txt';
+  document.title = (dirty ? '• ' : '') + (prof.name || 'profile') + ' - Editor de profile';
+}
+
+/* ---------------------------- abrir / salvar ------------------------------ */
+function openFile(file) {
+  if (dirty && !confirm('Há alterações não salvas. Abrir outro arquivo mesmo assim?')) return;
+  const rd = new FileReader();
+  rd.onload = () => { try { loadText(rd.result, file.name); } catch (err) { alert('Não consegui abrir "' + file.name + '":\n' + err.message); } };
+  rd.readAsText(file, 'latin1');
+}
+async function saveFile() {
+  const text = serializeProfile(prof), suggestedName = (prof.name.trim() || 'profile') + '.txt';
+  if (window.showSaveFilePicker) {
+    try {
+      const h = await window.showSaveFilePicker({ suggestedName, types: [{ description: 'Profile EZT-570i', accept: { 'text/plain': ['.txt'] } }] });
+      const wr = await h.createWritable(); await wr.write(text); await wr.close();
+      dirty = false; renderAll(); return;
+    } catch (err) { if (err.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = suggestedName;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+  dirty = false; renderAll();
+}
+
+/* -------------------------------- eventos --------------------------------- */
+$('btnOpen').onclick = () => $('fileIn').click();
+$('fileIn').onchange = e => { if (e.target.files[0]) openFile(e.target.files[0]); e.target.value = ''; };
+$('btnNew').onclick = () => { if (!dirty || confirm('Há alterações não salvas. Começar um profile novo mesmo assim?')) newProfile(); };
+$('btnSave').onclick = saveFile; $('btnUndo').onclick = undo; $('btnRedo').onclick = redo;
+$('name').onchange = e => { const v = e.target.value; mutate(() => { prof.name = v; }); };
+$('tbody').addEventListener('change', onTableChange);
+$('tbody').addEventListener('click', onTableClick);
+$('tbody').addEventListener('focusin', e => { const tr = e.target.closest('tr[data-row]'); if (tr && +tr.dataset.row !== sel) select(+tr.dataset.row, false); });
+$('chart').addEventListener('pointerdown', onPointerDown);
+$('chart').addEventListener('pointermove', onPointerMove);
+$('chart').addEventListener('pointerup', onPointerUp);
+$('chart').addEventListener('pointercancel', onPointerUp);
+function insertInputs(needTemp, needDur) {
+  const t = Math.round(Number($('insT').value) * 10) / 10, d = parseDur($('insD').value);
+  if (needTemp && ($('insT').value === '' || !isFinite(t))) { alert('Informe a temperatura.'); return null; }
+  if (needDur && (d === null || d === 0)) { alert('Informe a duração (h:mm:ss, h:mm ou só minutos).'); return null; }
+  return { t, d };
+}
+$('insJumpHold').onclick = () => { const v = insertInputs(true, true); if (v) insertSteps(b => [mkStep(b, 0, v.t), mkStep(b, v.d, v.t)]); };
+$('insRamp').onclick = () => { const v = insertInputs(true, true); if (v) insertSteps(b => [mkStep(b, v.d, v.t)]); };
+$('insHold').onclick = () => { const v = insertInputs(false, true); if (v) insertSteps(b => [mkStep(b, v.d, b.sp)]); };
+window.addEventListener('resize', () => renderChart());
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+  else if (k === 's') { e.preventDefault(); saveFile(); }
+  else if (k === 'o') { e.preventDefault(); $('fileIn').click(); }
+});
+window.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drop'); });
+window.addEventListener('dragleave', () => document.body.classList.remove('drop'));
+window.addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('drop');
+  if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]);
+});
+
+newProfile();
+</script>
+</body>
+</html>
