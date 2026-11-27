@@ -1,11 +1,11 @@
-comport = arg and arg[2] or "COM13"  -- fallback se não passar
+comport = arg and arg[2] or "COM15"  -- fallback se não passar
 project = arg and arg[1]
 notstart = true
 
 if project == "pd4202" then
 	print("Configurando Tensoes para o PD4202")
 	ju_hw2:card_init(comport)
-	ju_hw2:voltage_force_start("A")
+	ju_hw2:voltage_force_start("B")
 	ju_hw2:write_pin_probe(0,1,false)
 	ju_hw2:write_pin_probe(1,0,false)
 	ju_hw2:write_pin_probe(3,0,false)
@@ -35,10 +35,26 @@ if project == "pd4302" then
 	ju_hw2:set_pwr_chain(4,"2V5")
 	
 	-- Testar as tensões:
-	ju_hw2:voltage_start("A")
+	ju_hw2:voltage_start("B",true)
 	
 	-- Ligar forçado
-	ju_hw2:voltage_force_start("A")
+	ju_hw2:voltage_force_start("B")
+	notstart = false
+end
+
+
+if project == "A" then
+	ju_hw2:card_init(comport)
+	-- Ligar forçado
+	ju_hw2:voltage_force_start("B")
+	notstart = false
+end
+
+
+if project == "B" then
+	ju_hw2:card_init(comport)
+	-- Ligar forçado
+	ju_hw2:voltage_force_start("B")
 	notstart = false
 end
 
